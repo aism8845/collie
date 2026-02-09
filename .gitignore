@@ -380,3 +380,6 @@ collie-opt
 # --- debug scratch dirs ---
 _zero_row_debug_*/
 _zr/
+
+# --- Windows Mark-of-the-Web metadata ---
+*:Zone.Identifier
