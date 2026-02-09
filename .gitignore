@@ -366,3 +366,17 @@ OutputData
 # PETSc binary output
 binaryoutput
 collie.yaml
+
+# --- build + runtime artifacts ---
+build/
+lib/
+collie-opt
+.jitcache/
+
+# --- MOOSE / Exodus outputs ---
+*.e
+*.e.*
+
+# --- debug scratch dirs ---
+_zero_row_debug_*/
+_zr/
