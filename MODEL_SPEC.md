@@ -83,3 +83,13 @@ If an AI agent is used:
 - It must follow this MODEL_SPEC strictly.
 - It must make minimal diffs, explain why each file changed, and never “invent” new physics.
 - It must run the required tests and report pass/fail with the relevant log tail on failure.
+
+## 3) Required tests before committing
+
+Run these from the repo root before any substantial commit (or before an AI agent opens a PR):
+
+```bash
+make -j8
+./scripts/smoke_test.sh
+./run_tests -j8   # optional: only if you have harness tests configured
+
