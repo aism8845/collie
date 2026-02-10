@@ -374,15 +374,21 @@
 []
 
 [VectorPostprocessors]
-  [minJ_loc]
-    type = ADMaterialPropertyMinLocation
-    ad_material_property = volume_ratio
+  [mesh_distortion_watch]
+    type = MeshDistortionWatch
+    deformation_gradient_property = deformation_gradient
+    exclude_radius_factor = 2.0
     execute_on = 'timestep_end'
-    outputs = 'console'
   []
 []
 
 [Postprocessors]
+  [dt]
+    type = TimestepSize
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+
   [min_elem_quality]
     type = ElementExtremeValue
     variable = elem_quality
@@ -391,20 +397,117 @@
     outputs = 'none'
   []
 
-  [min_J]
+  [J_min_1]
     type = VectorPostprocessorComponent
-    vectorpostprocessor = minJ_loc
-    vector_name = min_value
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = J_min_1
     index = 0
     execute_on = 'timestep_end'
-    outputs = 'none'
+    outputs = 'mesh_watch'
+  []
+  [J_min_1_x]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = J_min_1_x
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [J_min_1_y]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = J_min_1_y
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [J_min_2]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = J_min_2
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [J_min_2_x]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = J_min_2_x
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [J_min_2_y]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = J_min_2_y
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+
+  [metric2_min_1]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = metric2_min_1
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [metric2_min_1_x]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = metric2_min_1_x
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [metric2_min_1_y]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = metric2_min_1_y
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [metric2_min_2]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = metric2_min_2
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [metric2_min_2_x]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = metric2_min_2_x
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
+  []
+  [metric2_min_2_y]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = mesh_distortion_watch
+    vector_name = metric2_min_2_y
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'mesh_watch'
   []
 
   [dt_limit_from_J]
     type = ParsedPostprocessor
-    pp_names = 'min_J'
-    expression = 'if(min_J < 0.20, 1e-4, 1e99)'
+    pp_names = 'J_min_1'
+    expression = 'if(J_min_1 < 0.20, 1e-4, 1e99)'
     execute_on = 'timestep_end'
+    outputs = 'none'
+  []
+  [mesh_distortion_warning]
+    type = ParsedPostprocessor
+    pp_names = 'J_min_1'
+    expression = 'if(J_min_1 < 0.20, 1, 0)'
+    execute_on = 'timestep_end'
+    outputs = 'console'
   []
 
   [avg_J]
@@ -479,6 +582,12 @@
 
 [Outputs]
   exodus = true
-  csv    = true
   perf_graph = true
+
+  [mesh_watch]
+    type = CSV
+    file_base = outputs/mesh_watch
+    execute_on = 'TIMESTEP_END'
+    show = 'dt J_min_1 J_min_1_x J_min_1_y metric2_min_1 metric2_min_1_x metric2_min_1_y J_min_2 J_min_2_x J_min_2_y metric2_min_2 metric2_min_2_x metric2_min_2_y'
+  []
 []
