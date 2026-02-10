@@ -232,7 +232,7 @@
     G_cell    = 1.0
     q_cell    = -2.0
 
-    k_exp_max = 0.2
+    k_exp_max = 0.175
     c1        = 10.0
     c2        = 2.0
 
@@ -249,7 +249,7 @@
 
     # --- nutrient transport/consumption (coupled) ---
     D_nutrient = 0.1
-    phi_cell_0 = 0.10
+    phi_cell_0 = 0.60
 
     phi_ref_ic = phi_ref_ic
 

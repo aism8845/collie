@@ -3,7 +3,7 @@
 
 phi0 = 0.06
 Aphi = 0.03
-lc   = 0.05      # NOTE: choose lc >= a few * local element size to actually see "splotches"
+lc   = 0.001      # NOTE: choose lc >= a few * local element size to actually see "splotches"
 
 phi_min = ${fparse phi0 - Aphi}
 phi_max = ${fparse phi0 + Aphi}
