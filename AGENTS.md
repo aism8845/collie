@@ -12,7 +12,6 @@
 
 ## Required checks before declaring success
 - Run: make -j8
-- Run: ./scripts/smoke_test.sh
+- Run: ./scripts/smoke_debug_mpi8.sh
 - Smoke defaults to MPI via `mpiexec` with `SMOKE_NP=8` (override using `SMOKE_NP`).
-- Canonical quick debug smoke command: `./scripts/smoke_debug_mpi8.sh`
 - If a check fails: stop, report the error, propose the smallest fix.

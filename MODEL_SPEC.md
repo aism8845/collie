@@ -68,7 +68,7 @@ Run these from the repo root.
 - make -j8
 
 ### 3.2 Smoke run (fastest representative input)
-- ./scripts/smoke_test.sh
+- ./scripts/smoke_debug_mpi8.sh
 - Uses `mpiexec` by default with `SMOKE_NP=8` (override with `SMOKE_NP=<n>`).
 
 ### 3.3 App test harness (when available)
@@ -91,5 +91,5 @@ Run these from the repo root before any substantial commit (or before an AI agen
 
 ```bash
 make -j8
-./scripts/smoke_test.sh
+./scripts/smoke_debug_mpi8.sh
 ./run_tests -j8   # optional: only if you have harness tests configured
