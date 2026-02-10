@@ -1,5 +1,7 @@
 #include "ADNutrientTLTransport.h"
 
+#include "MathUtils.h"
+
 registerMooseObject("collieApp", ADNutrientTLTransport);
 
 InputParameters
@@ -75,7 +77,11 @@ ADNutrientTLTransport::ADNutrientTLTransport(const InputParameters & parameters)
     _Jdot_nutr(declareADProperty<Real>("Jdot_nutr")),
     _D_eff_nutr(declareADProperty<RealTensorValue>("D_eff_nutr")),
     _n_source_ref_nutr(declareADProperty<Real>("n_source_ref_nutr")),
-    _jdot_rate_nutr(declareADProperty<Real>("jdot_rate_nutr"))
+    _jdot_rate_nutr(declareADProperty<Real>("jdot_rate_nutr")),
+
+    _D_phys_nutr(declareADProperty<Real>("D_phys_nutr")),
+    _D_ref_nutr(declareADProperty<Real>("D_ref_nutr")),
+    _D_iso_nutr(declareADProperty<Real>("D_iso_nutr"))
 {
   if (_radial_coord > 2)
     mooseError("ADNutrientTLTransport: 'radial_coord' must be 0, 1, or 2.");
@@ -87,7 +93,7 @@ ADNutrientTLTransport::computeQpProperties()
   const Real r = _q_point[_qp](_radial_coord);
 
   // --- Current gradients (AD) ---
-  const auto & gur = _grad_ur[_qp];  // VectorValue<ADReal>
+  const auto & gur = _grad_ur[_qp];
   const auto & guz = _grad_uz[_qp];
 
   const ADReal dur_dr = gur(_radial_coord);
@@ -127,7 +133,7 @@ ADNutrientTLTransport::computeQpProperties()
                         const VariableGradient & gurv,
                         const VariableGradient & guzv) -> Real
   {
-    const auto & gur_old = gurv[_qp]; // VectorValue<Real>
+    const auto & gur_old = gurv[_qp];
     const auto & guz_old = guzv[_qp];
 
     const Real dur_dr_o = gur_old(_radial_coord);
@@ -178,7 +184,7 @@ ADNutrientTLTransport::computeQpProperties()
 
   _Jdot_nutr[_qp] = Jdot;
 
-  // ADMatReaction adds (-rate * n). To add +Jdot*n, set rate = -Jdot.
+  // ADMatReaction adds (-rate*n). To add +Jdot*n, set rate = -Jdot.
   _jdot_rate_nutr[_qp] = -Jdot;
 
   // --- phi(J,phi_ref) mapping ---
@@ -186,7 +192,7 @@ ADNutrientTLTransport::computeQpProperties()
   const ADReal denom = (J - 1.0) * phi_ref + 1.0;
   ADReal phi = (J * phi_ref) / denom;
 
-  // Hard clamps: ok for a "failfast" debug, but can hurt Newton if active often.
+  // Failfast clamps (ok if rarely active; consider smoothing later if Newton gets unhappy)
   if (MetaPhysicL::raw_value(phi) < 0.0)
     phi = 0.0;
   if (MetaPhysicL::raw_value(phi) > _phi_max)
@@ -196,6 +202,10 @@ ADNutrientTLTransport::computeQpProperties()
   ADReal D_phys = _D0 * (1.0 - phi) / (1.0 + 0.5 * phi);
   if (MetaPhysicL::raw_value(D_phys) < _D_floor)
     D_phys = _D_floor;
+
+  // diagnostics (unique names)
+  _D_phys_nutr[_qp] = D_phys;
+  _D_ref_nutr[_qp]  = J * D_phys;
 
   // --- K = J * D_phys * F^{-1} * F^{-T} ---
   const ADRankTwoTensor Finv = F.inverse();
@@ -208,6 +218,8 @@ ADNutrientTLTransport::computeQpProperties()
 
   _D_eff_nutr[_qp] = K;
 
+  _D_iso_nutr[_qp] = (K(0,0) + K(1,1) + K(2,2)) / 3.0;
+
   // --- f_a(n): Hill gate ---
   ADReal nloc = _n[_qp];
   if (MetaPhysicL::raw_value(nloc) < 0.0)
@@ -219,6 +231,6 @@ ADNutrientTLTransport::computeQpProperties()
 
   const ADReal gamma_local = _gamma_n0 * phi * fa;
 
-  // ADMatReaction adds (-rate * n); to add +J*gamma*n, set rate = -J*gamma
+  // ADMatReaction adds (-rate*n); to add +J*gamma*n, set rate = -J*gamma
   _n_source_ref_nutr[_qp] = -J * gamma_local;
 }

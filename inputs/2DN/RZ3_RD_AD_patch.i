@@ -142,41 +142,45 @@
       strain = FINITE
       displacements = 'ux uy'
       add_variables = true
-
-      # IMPORTANT:
-      # formulation = TOTAL     # <-- remove this
-      use_automatic_differentiation = true
+      formulation = TOTAL
+      use_automatic_differentiation = false
       [all] []
     []
   []
 []
 
 [Kernels]
-  # J * n_dot
-  [n_td]
-    type     = ADMatCoefTimeDerivative
-    variable = n
-    coef     = J_nutr
+  [u_n_offdiag_x]
+    type = TLStressDivergenceNutrientOffDiag
+    variable = ux
+    component = 0
+    displacements = 'ux uy'
+    large_kinematics = true
+    n = n
   []
-
-  # Div( K grad n )
+  [u_n_offdiag_y]
+    type = TLStressDivergenceNutrientOffDiag
+    variable = uy
+    component = 1
+    displacements = 'ux uy'
+    large_kinematics = true
+    n = n
+  []
+  [n_td]
+    type = ADJnTimeDerivative
+    variable = n
+    coef = J_nutr
+    coef_dot = Jdot_nutr
+    include_jdot = true
+  []
   [n_diff]
-    type       = ADMatAnisoDiffusion
-    variable   = n
+    type = ADMatTensorDiffusion
+    variable = n
     diffusivity = D_eff_nutr
   []
-
-  # + Jdot * n  (implemented via -rate*n with rate = -Jdot)
-  [n_jdot]
-    type          = ADMatReaction
-    variable      = n
-    reaction_rate = jdot_rate_nutr
-  []
-
-  # + J * gamma * n  (implemented via -rate*n with rate = -J*gamma)
   [n_rxn]
-    type          = ADMatReaction
-    variable      = n
+    type = ADMatReactionSigned
+    variable = n
     reaction_rate = n_source_ref_nutr
   []
 []
@@ -252,25 +256,29 @@
     n        = n
   []
   [nutrient_tl]
-    type = ADNutrientTLTransport
+    type  = ADNutrientTLTransport
     block = 0
 
-    n      = n
+    # TEMP: keep these only to satisfy current required params
     disp_r = ux
     disp_z = uy
 
-    axisymmetric = true
-    radial_coord = 0
-
+    # keep the rest
+    n            = n
     phi_cell_ref = phi_cell_ref
-
     D0      = 0.1
     D_floor = 1e-12
-
     gamma_n0 = 20.0
     phi_max  = 0.65
     n_c1     = 0.05
     n_c2     = 12.0
+  []
+  
+  [nutr_kin]
+    type = ADComputeAxisymmetricRZFiniteStrain
+    block = 0
+    displacements = 'ux uy'
+    base_name = nutr_
   []
 []
 
@@ -407,12 +415,13 @@
 
   nl_rel_tol = 1e-5
   nl_abs_tol = 1e-8
-  nl_max_its = 100
+  nl_max_its = 50
 
-  petsc_options_iname = '-snes_type -snes_linesearch_type -ksp_type -ksp_rtol -pc_type -pc_hypre_type -snes_rtol -snes_atol'
-  petsc_options_value =  'newtonls bt gmres 1e-5 hypre boomeramg 1e-4 1e-7'
+  petsc_options_iname = '-snes_type -snes_linesearch_type -ksp_type -ksp_rtol -ksp_max_it -pc_type -pc_factor_mat_solver_type -snes_rtol -snes_atol'
+  petsc_options_value =  'newtonls bt gmres 1e-5 200 lu mumps 1e-4 1e-7'
 
   automatic_scaling = true
+
 
   [TimeStepper]
     type               = IterationAdaptiveDT
