@@ -46,6 +46,9 @@ protected:
   const Real _D_phys_floor;
   const Real _J_floor;
   const Real _n_eps;
+  const Real _smooth_eps_c;
+  const Real _smooth_eps_D;
+  const Real _smooth_eps_J;
 
   // Flags and couplings
   const bool _has_n;

@@ -27,6 +27,21 @@ namespace
     const Real t4 = t2 * t2;
     return t4 * t;                    // t^5 = x^(5/3)
   }
+
+  inline Real smooth_max(const Real x, const Real a, const Real eps)
+  {
+    return 0.5 * (x + a + std::sqrt((x - a) * (x - a) + eps * eps));
+  }
+
+  inline Real smooth_min(const Real x, const Real b, const Real eps)
+  {
+    return 0.5 * (x + b - std::sqrt((x - b) * (x - b) + eps * eps));
+  }
+
+  inline Real smooth_clamp(const Real x, const Real a, const Real b, const Real eps)
+  {
+    return smooth_min(smooth_max(x, a, eps), b, eps);
+  }
 } // namespace
 
 
@@ -68,6 +83,9 @@ CellGelMixtureOpt::validParams()
   params.addParam<Real>("J_floor", 1e-12, "Floor on Jacobian used in diffusion pull-back.");
 
   params.addParam<Real>("n_eps", 1e-8,"Small regularization for dividing by n when forming an effective MatReaction rate.");
+  params.addParam<Real>("smooth_eps_c", 1e-12, "Smoothing epsilon for concentration/phi clamps.");
+  params.addParam<Real>("smooth_eps_D", 1e-12, "Smoothing epsilon for diffusivity floor.");
+  params.addParam<Real>("smooth_eps_J", 1e-8, "Smoothing epsilon for Jacobian floor.");
 
   // ---- initial microstructure / reference cell fraction field (optional) ----
   params.addCoupledVar("phi_ref_ic", "Optional field used to initialize phi_cell_ref at t=0 (seed with RandomIC for speckled 3D). ");
@@ -101,6 +119,9 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _D_phys_floor(getParam<Real>("D_phys_floor")),
     _J_floor(getParam<Real>("J_floor")),
     _n_eps(getParam<Real>("n_eps")),
+    _smooth_eps_c(getParam<Real>("smooth_eps_c")),
+    _smooth_eps_D(getParam<Real>("smooth_eps_D")),
+    _smooth_eps_J(getParam<Real>("smooth_eps_J")),
 
     // nutrient coupling
     _has_n(isCoupled("n")),
@@ -192,7 +213,7 @@ CellGelMixtureOpt::initQpStatefulProperties()
   if (_has_phi_ref_ic)
     phi_ref = (*_phi_ref_ic)[_qp];
 
-  phi_ref = std::min(1.0 - 1e-8, std::max(1e-8, phi_ref));
+  phi_ref = smooth_clamp(phi_ref, 1e-8, 1.0 - 1e-8, _smooth_eps_c);
 
   _phi_cell_ref[_qp] = phi_ref;   // freeze reference texture
   _phi_cell[_qp]     = phi_ref;   // consistent initial current value
@@ -247,7 +268,7 @@ CellGelMixtureOpt::computeQpProperties()
   Real phi_ref_here = _phi_cell_0;
   if (_has_phi_ref_ic)
     phi_ref_here = (*_phi_ref_ic)[_qp];
-  phi_ref_here = std::min(1.0 - 1e-8, std::max(1e-8, phi_ref_here));
+  phi_ref_here = smooth_clamp(phi_ref_here, 1e-8, 1.0 - 1e-8, _smooth_eps_c);
 
   _phi_ref_from_ic[_qp] = phi_ref_here;  // keep this for debugging
 
@@ -302,7 +323,7 @@ CellGelMixtureOpt::computeQpProperties()
   //const Real k_exp0 = _k_exp_max - _k_exp_max / (1.0 + pow(_t / _c1, _c2));
 
   const Real T = 2.0;
-  Real s = std::min(1.0, std::max(0.0, _t / T));
+  Real s = smooth_clamp(_t / T, 0.0, 1.0, _smooth_eps_c);
   Real r = 6*std::pow(s,5) - 15*std::pow(s,4) + 10*std::pow(s,3);
   const Real k_exp0 = _k_exp_max * r;
 
@@ -313,15 +334,15 @@ CellGelMixtureOpt::computeQpProperties()
   const RankTwoTensor A = F_inv * F_inv.transpose();  // = F^{-1}F^{-T}
 
   // ---- nutrient diffusivity (physical crowding law, then TL pull-back) ----
-  const Real J_use = std::max(J_def, _J_floor);
+  const Real J_use = smooth_max(J_def, _J_floor, _smooth_eps_J);
 
   // Physical (spatial) diffusivity in the current configuration:
   Real D_phys = _D_nutrient;
   if (_use_crowding_diffusion)
   {
-    const Real phi = std::min(std::max(_phi_cell[_qp], 0.0), 0.999999);
+    const Real phi = smooth_clamp(_phi_cell[_qp], 0.0, 0.999999, _smooth_eps_c);
     D_phys = _D_nutrient * (1.0 - phi) / (1.0 + 0.5 * phi);
-    D_phys = std::max(D_phys, _D_phys_floor);
+    D_phys = smooth_max(D_phys, _D_phys_floor, _smooth_eps_D);
   }
   _D_phys[_qp] = D_phys;
 
@@ -427,7 +448,7 @@ CellGelMixtureOpt::computeQpProperties()
     _kT1[_qp] = 0.0;
   else if (_m_T1 > 0.0)
   {
-    const Real chi_here  = std::max(0.0, _chi[_qp]);
+    const Real chi_here  = smooth_max(_chi[_qp], 0.0, _smooth_eps_c);
     const Real chi_crit  = _chi_str;
     const Real m         = _m_T1;
 

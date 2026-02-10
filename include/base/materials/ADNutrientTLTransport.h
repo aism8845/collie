@@ -48,6 +48,8 @@ protected:
   const Real _n_c1;
   const unsigned int _n_c2;
   const Real _n_c1_pow;
+  const Real _smooth_eps_c;
+  const Real _smooth_eps_D;
 
   // outputs used by AD kernels
   ADMaterialProperty<Real> & _J_nutr;

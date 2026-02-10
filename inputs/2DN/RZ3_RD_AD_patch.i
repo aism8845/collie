@@ -85,6 +85,11 @@
     order  = CONSTANT
   []
 
+  [elem_quality]
+    family = MONOMIAL
+    order  = CONSTANT
+  []
+
   # --- Diffusivity diagnostics (ParaView) ---
   [D_iso]
     family = MONOMIAL
@@ -104,7 +109,7 @@
 [UserObjects]
   [phi_ref_solution]
     type             = SolutionUserObject
-    mesh             = phi_ref_filter_out2.e
+    mesh             = phi_ref_filter2d_out.e
     system_variables = 'phi_ref_ic'
     timestep         = LATEST
   []
@@ -283,6 +288,13 @@
 []
 
 [AuxKernels]
+  [elem_quality_aux]
+    type = ElementQualityAux
+    variable = elem_quality
+    metric = JACOBIAN
+    execute_on = 'initial nonlinear timestep_end'
+  []
+
   # Stress component for ParaView
   [c11_aux]
     type            = RankTwoAux
@@ -361,7 +373,40 @@
 
 []
 
+[VectorPostprocessors]
+  [minJ_loc]
+    type = ADMaterialPropertyMinLocation
+    ad_material_property = volume_ratio
+    execute_on = 'timestep_end'
+    outputs = 'console'
+  []
+[]
+
 [Postprocessors]
+  [min_elem_quality]
+    type = ElementExtremeValue
+    variable = elem_quality
+    value_type = min
+    execute_on = 'initial timestep_end'
+    outputs = 'none'
+  []
+
+  [min_J]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = minJ_loc
+    vector_name = min_value
+    index = 0
+    execute_on = 'timestep_end'
+    outputs = 'none'
+  []
+
+  [dt_limit_from_J]
+    type = ParsedPostprocessor
+    pp_names = 'min_J'
+    expression = 'if(min_J < 0.20, 1e-4, 1e99)'
+    execute_on = 'timestep_end'
+  []
+
   [avg_J]
     type     = ElementAverageValue
     variable = volume_ratio
@@ -406,7 +451,7 @@
 [Executioner]
   type        = Transient
   scheme      = bdf2
-  solve_type  = NEWTON
+  solve_type  = PJFNK
   line_search = bt
 
   dtmin    = 1e-4
@@ -415,20 +460,19 @@
 
   nl_rel_tol = 1e-5
   nl_abs_tol = 1e-8
-  nl_max_its = 50
+  nl_max_its = 100
 
-  petsc_options_iname = '-snes_type -snes_linesearch_type -ksp_type -ksp_rtol -ksp_max_it -pc_type -pc_factor_mat_solver_type -snes_rtol -snes_atol'
-  petsc_options_value =  'newtonls bt gmres 1e-5 200 lu mumps 1e-4 1e-7'
+  petsc_options_iname = '-snes_type -snes_linesearch_type -ksp_type -ksp_rtol -pc_type -pc_hypre_type -snes_rtol -snes_atol'
+  petsc_options_value =  'newtonls bt gmres 2e-5 hypre boomeramg 1e-4 1e-7'
 
   automatic_scaling = true
-
 
   [TimeStepper]
     type               = IterationAdaptiveDT
     dt                 = 1e-2
     growth_factor      = 1.3
     cutback_factor     = 0.7
-    optimal_iterations = 70
+    optimal_iterations = 80
     iteration_window   = 2
   []
 []

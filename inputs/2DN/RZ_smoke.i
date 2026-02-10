@@ -52,6 +52,10 @@
     family = MONOMIAL
     order  = CONSTANT
   []
+  [elem_quality]
+    family = MONOMIAL
+    order  = CONSTANT
+  []
   [D_phys_out]
     family = MONOMIAL
     order  = CONSTANT
@@ -244,6 +248,36 @@
     property = D_phys
     execute_on = 'INITIAL TIMESTEP_END'
   []
+  [elem_quality_aux]
+    type = ElementQualityAux
+    variable = elem_quality
+    metric = JACOBIAN
+    execute_on = 'initial nonlinear timestep_end'
+  []
+[]
+
+[VectorPostprocessors]
+  [minJ_loc]
+    type = ADMaterialPropertyMinLocation
+    ad_material_property = volume_ratio
+    execute_on = 'nonlinear timestep_end'
+  []
+[]
+
+[Postprocessors]
+  [min_J]
+    type = VectorPostprocessorComponent
+    vectorpostprocessor = minJ_loc
+    vector_name = min_value
+    index = 0
+    execute_on = 'nonlinear timestep_end'
+  []
+  [min_elem_quality]
+    type = ElementExtremeValue
+    variable = elem_quality
+    value_type = min
+    execute_on = 'initial nonlinear timestep_end'
+  []
 []
 
 [Preconditioning]
@@ -263,17 +297,18 @@
   dt       = 1e-2
   end_time = 5e-2
 
-  nl_rel_tol = 1e-6
-  nl_abs_tol = 1e-9
-  nl_max_its = 25
+  nl_rel_tol = 1e-4
+  nl_abs_tol = 1e-7
+  nl_max_its = 50
 
   # Robust small-problem solve
-  petsc_options_iname = '-snes_type -snes_linesearch_type -ksp_type -pc_type -snes_rtol -snes_atol'
-  petsc_options_value =  'newtonls bt preonly lu 1e-8 1e-10'
+  petsc_options_iname = '-snes_type -snes_linesearch_type -snes_linesearch_damping -snes_linesearch_max_it -ksp_type -pc_type -snes_rtol -snes_atol'
+  petsc_options_value =  'newtonls bt 0.5 10 preonly lu 1e-8 1e-10'
 []
 
 [Outputs]
   exodus = true
   csv    = true
-  execute_on = 'FINAL'
+  execute_on = 'nonlinear timestep_end'
+  perf_graph = true
 []

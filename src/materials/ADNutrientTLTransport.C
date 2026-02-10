@@ -2,7 +2,33 @@
 
 #include "MathUtils.h"
 
+#include <cmath>
+
 registerMooseObject("collieApp", ADNutrientTLTransport);
+
+namespace
+{
+template <typename T>
+T
+smooth_max(const T & x, const T & a, const Real eps)
+{
+  return 0.5 * (x + a + std::sqrt((x - a) * (x - a) + eps * eps));
+}
+
+template <typename T>
+T
+smooth_min(const T & x, const T & b, const Real eps)
+{
+  return 0.5 * (x + b - std::sqrt((x - b) * (x - b) + eps * eps));
+}
+
+template <typename T>
+T
+smooth_clamp(const T & x, const T & a, const T & b, const Real eps)
+{
+  return smooth_min(smooth_max(x, a, eps), b, eps);
+}
+} // namespace
 
 InputParameters
 ADNutrientTLTransport::validParams()
@@ -32,6 +58,8 @@ ADNutrientTLTransport::validParams()
   params.addRequiredParam<Real>("phi_max", "Maximum cell volume fraction.");
   params.addRequiredParam<Real>("n_c1", "Half-activation concentration for f_a(n).");
   params.addRequiredParam<unsigned int>("n_c2", "Hill exponent for f_a(n) (integer).");
+  params.addParam<Real>("smooth_eps_c", 1e-12, "Smoothing epsilon for concentration/phi clamps.");
+  params.addParam<Real>("smooth_eps_D", 1e-12, "Smoothing epsilon for diffusivity floor.");
 
   params.addClassDescription(
       "AD TL nutrient transport coefficients with full coupling to displacements (builds F from AD displacement gradients).");
@@ -72,6 +100,8 @@ ADNutrientTLTransport::ADNutrientTLTransport(const InputParameters & parameters)
     _n_c1(getParam<Real>("n_c1")),
     _n_c2(getParam<unsigned int>("n_c2")),
     _n_c1_pow(std::pow(_n_c1, static_cast<Real>(_n_c2))),
+    _smooth_eps_c(getParam<Real>("smooth_eps_c")),
+    _smooth_eps_D(getParam<Real>("smooth_eps_D")),
 
     _J_nutr(declareADProperty<Real>("J_nutr")),
     _Jdot_nutr(declareADProperty<Real>("Jdot_nutr")),
@@ -192,16 +222,11 @@ ADNutrientTLTransport::computeQpProperties()
   const ADReal denom = (J - 1.0) * phi_ref + 1.0;
   ADReal phi = (J * phi_ref) / denom;
 
-  // Failfast clamps (ok if rarely active; consider smoothing later if Newton gets unhappy)
-  if (MetaPhysicL::raw_value(phi) < 0.0)
-    phi = 0.0;
-  if (MetaPhysicL::raw_value(phi) > _phi_max)
-    phi = _phi_max;
+  phi = smooth_clamp(phi, ADReal(0.0), ADReal(_phi_max), _smooth_eps_c);
 
   // --- D_phys(phi) ---
   ADReal D_phys = _D0 * (1.0 - phi) / (1.0 + 0.5 * phi);
-  if (MetaPhysicL::raw_value(D_phys) < _D_floor)
-    D_phys = _D_floor;
+  D_phys = smooth_max(D_phys, ADReal(_D_floor), _smooth_eps_D);
 
   // diagnostics (unique names)
   _D_phys_nutr[_qp] = D_phys;
@@ -222,8 +247,7 @@ ADNutrientTLTransport::computeQpProperties()
 
   // --- f_a(n): Hill gate ---
   ADReal nloc = _n[_qp];
-  if (MetaPhysicL::raw_value(nloc) < 0.0)
-    nloc = 0.0;
+  nloc = smooth_max(nloc, ADReal(0.0), _smooth_eps_c);
 
   const ADReal num  = MathUtils::pow(nloc, static_cast<int>(_n_c2));
   const ADReal den2 = num + ADReal(_n_c1_pow) + 1e-16;
