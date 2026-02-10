@@ -30,21 +30,10 @@ echo "[smoke] run dir: ${TMP}"
 cp "${INP}" "${TMP}/RZ_smoke.i"
 
 cd "${TMP}"
-export MPICH_CH4_NETMOD="${MPICH_CH4_NETMOD:-shm}"
-export MPIR_CVAR_CH4_NETMOD="${MPIR_CVAR_CH4_NETMOD:-shm}"
-export FI_PROVIDER="${FI_PROVIDER:-shm}"
-export FI_SHM_DISABLE_CMA="${FI_SHM_DISABLE_CMA:-1}"
-export FI_SHM_ENABLE_XPMEM="${FI_SHM_ENABLE_XPMEM:-0}"
-export MPICH_OFI_DISABLE_DATAGRAM="${MPICH_OFI_DISABLE_DATAGRAM:-1}"
-if [[ -n "${SMOKE_NP:-}" ]]; then
-  echo "[smoke] MPI enabled: SMOKE_NP=${SMOKE_NP}"
-  command -v mpiexec
-  mpiexec -version
-  mpiexec -n "${SMOKE_NP}" "${EXE}" -i RZ_smoke.i > smoke.log 2>&1
-else
-  echo "[smoke] serial run (set SMOKE_NP for MPI)"
-  "${EXE}" -i RZ_smoke.i > smoke.log 2>&1
-fi
+SMOKE_NP="${SMOKE_NP:-8}"
+echo "[smoke] MPI run: SMOKE_NP=${SMOKE_NP}"
+command -v mpiexec
+mpiexec -n "${SMOKE_NP}" "${EXE}" -i RZ_smoke.i > smoke.log 2>&1
 
 echo "[smoke] OK"
 tail -n 25 smoke.log
