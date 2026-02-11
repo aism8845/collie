@@ -1,6 +1,7 @@
 #include "ADNutrientTLTransport.h"
 
 #include "MathUtils.h"
+#include "MooseEnum.h"
 
 #include <cmath>
 
@@ -56,6 +57,10 @@ ADNutrientTLTransport::validParams()
 
   params.addRequiredParam<Real>("gamma_n0", "Nutrient consumption prefactor.");
   params.addRequiredParam<Real>("phi_max", "Maximum cell volume fraction.");
+  MooseEnum crowding_model("maxwell bruggeman percolation", "maxwell");
+  params.addParam<MooseEnum>("crowding_model", crowding_model,
+                             "Crowding model for physical diffusivity.");
+  params.addParam<Real>("crowd_exp", 2.0, "Exponent for bruggeman/percolation crowding models.");
   params.addRequiredParam<Real>("n_c1", "Half-activation concentration for f_a(n).");
   params.addRequiredParam<unsigned int>("n_c2", "Hill exponent for f_a(n) (integer).");
   params.addParam<Real>("smooth_eps_c", 1e-12, "Smoothing epsilon for concentration/phi clamps.");
@@ -97,6 +102,8 @@ ADNutrientTLTransport::ADNutrientTLTransport(const InputParameters & parameters)
     _D_floor(getParam<Real>("D_floor")),
     _gamma_n0(getParam<Real>("gamma_n0")),
     _phi_max(getParam<Real>("phi_max")),
+    _crowding_model(getParam<MooseEnum>("crowding_model")),
+    _crowd_exp(getParam<Real>("crowd_exp")),
     _n_c1(getParam<Real>("n_c1")),
     _n_c2(getParam<unsigned int>("n_c2")),
     _n_c1_pow(std::pow(_n_c1, static_cast<Real>(_n_c2))),
@@ -225,7 +232,23 @@ ADNutrientTLTransport::computeQpProperties()
   phi = smooth_clamp(phi, ADReal(0.0), ADReal(_phi_max), _smooth_eps_c);
 
   // --- D_phys(phi) ---
-  ADReal D_phys = _D0 * (1.0 - phi) / (1.0 + 0.5 * phi);
+  ADReal D_phys = _D0;
+  if (_crowding_model == "maxwell")
+    D_phys = _D0 * (1.0 - phi) / (1.0 + 0.5 * phi);
+  else if (_crowding_model == "bruggeman")
+  {
+    const ADReal one_minus_phi = smooth_clamp(ADReal(1.0) - phi, ADReal(0.0), ADReal(1.0), _smooth_eps_c);
+    D_phys = _D0 * std::pow(one_minus_phi, _crowd_exp);
+  }
+  else if (_crowding_model == "percolation")
+  {
+    const ADReal phi_max = std::max(_phi_max, 1e-16);
+    const ADReal s = smooth_clamp(ADReal(1.0) - phi / phi_max, ADReal(0.0), ADReal(1.0), _smooth_eps_c);
+    D_phys = _D0 * std::pow(s, _crowd_exp);
+  }
+  else
+    mooseError("Unsupported crowding_model: ", _crowding_model);
+
   D_phys = smooth_max(D_phys, ADReal(_D_floor), _smooth_eps_D);
 
   // diagnostics (unique names)

@@ -2,6 +2,7 @@
 
 #include "ComputeLagrangianStressPK2.h"
 #include "DerivativeMaterialInterface.h"
+#include "MooseEnum.h"
 
 // Forward Declarations
 class CellGelMixtureOpt;
@@ -30,6 +31,7 @@ protected:
   const Real _D_nutrient;
 
   const Real _k_exp_max;
+  const Real _ke_ramp_T;
   const Real _c1;
   const Real _c2;
   const Real _k_T1_max;
@@ -49,6 +51,20 @@ protected:
   const Real _smooth_eps_c;
   const Real _smooth_eps_D;
   const Real _smooth_eps_J;
+  const MooseEnum _crowding_model;
+  const Real _phi_max;
+  const Real _crowd_exp;
+  const bool _gate_gp_on_ke;
+  const bool _gate_fa_on_ke;
+  const bool _gate_gp_on_kh;
+  const bool _gate_fa_on_kh;
+  const Real _k_rho_max;
+  const bool _gate_gp_on_krho;
+  const bool _gate_fa_on_krho;
+  const Real _krho_ramp_T;
+  const bool _enable_isotropic_growth;
+  const bool _enable_deviatoric_growth;
+  const bool _enable_T1;
 
   // Flags and couplings
   const bool _has_n;
@@ -100,6 +116,11 @@ protected:
   MaterialProperty<Real> & _pressure;
   MaterialProperty<Real> & _gp;
   MaterialProperty<Real> & _gate_tot;
+  MaterialProperty<Real> & _gate_ke_out;
+  MaterialProperty<Real> & _gate_kh_out;
+  MaterialProperty<Real> & _ke_swelling_out;
+  MaterialProperty<Real> & _ke_div_out;
+  MaterialProperty<Real> & _ke_total_out;
   MaterialProperty<Real> & _gamma_n_local;
   MaterialProperty<RealTensorValue> & _D_eff;
   MaterialProperty<Real> & _n_source_ref;

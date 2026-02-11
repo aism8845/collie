@@ -141,7 +141,7 @@
 [UserObjects]
   [phi_ref_solution]
     type             = SolutionUserObject
-    mesh             = phi_ref_filter2d_out.e
+    mesh             = ../../../phi_ref_filter2d_out.e
     system_variables = 'phi_ref_ic'
     timestep         = LATEST
   []
@@ -187,6 +187,7 @@
 []
 
 [Kernels]
+  active = 'n_td n_diff n_rxn'
   [u_n_offdiag_x]
     type = TLStressDivergenceNutrientOffDiag
     variable = ux
@@ -267,7 +268,7 @@
     G_cell    = 1.0
     q_cell    = -2.0
 
-    k_exp_max = 0.175
+    k_exp_max = 0.0
     ke_ramp_T = 2.0
     c1        = 10.0
     c2        = 2.0
@@ -305,9 +306,9 @@
     gate_gp_on_krho = true
     gate_fa_on_krho = true
     krho_ramp_T = 2.0
-    enable_isotropic_growth = true
-    enable_deviatoric_growth = true
-    enable_T1 = true
+    enable_isotropic_growth = false
+    enable_deviatoric_growth = false
+    enable_T1 = false
     smooth_eps_c = 1e-6
     n        = n
   []
@@ -921,17 +922,18 @@
 [Outputs]
   exodus = true
   perf_graph = true
+  file_base = outputs/suites/jacobian_solver/permutations_rz3/02_nutrient_only_no_growth/02_nutrient_only_no_growth
 
   [mesh_watch]
     type = CSV
-    file_base = outputs/mesh_watch
+    file_base = outputs/suites/jacobian_solver/permutations_rz3/02_nutrient_only_no_growth/mesh_watch
     execute_on = 'TIMESTEP_END'
     show = 'dt J_min_1 J_min_1_x J_min_1_y metric2_min_1 metric2_min_1_x metric2_min_1_y J_min_2 J_min_2_x J_min_2_y metric2_min_2 metric2_min_2_x metric2_min_2_y'
   []
 
   [solver_watch]
     type = CSV
-    file_base = outputs/solver_watch
+    file_base = outputs/suites/jacobian_solver/permutations_rz3/02_nutrient_only_no_growth/solver_watch
     execute_on = 'TIMESTEP_END'
     show = 'dt nonlinear_its linear_its J_min_1 metric2_min_1 mesh_distortion_warning min_elem_quality max_elem_quality min_volume_ratio max_volume_ratio avg_J vol_change_pct avg_n n_min n_max n_span n_min_elem n_max_elem avg_phi_cell min_phi_cell max_phi_cell avg_ke_total avg_ke_swelling avg_ke_div min_ke_total max_ke_total avg_Dphys min_Dphys max_Dphys avg_Dref min_Dref D_ref_phys_ratio avg_gate_tot min_gate_tot max_gate_tot avg_gp avg_press avg_fa avg_ke avg_kh avg_eta avg_gamma_n_local avg_n_source_ref n_corner n_bulk ke_total_corner ke_total_bulk phi_corner phi_bulk press_corner press_bulk'
   []

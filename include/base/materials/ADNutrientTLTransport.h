@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ADMaterial.h"
+#include "MooseEnum.h"
 
 class ADNutrientTLTransport : public ADMaterial
 {
@@ -45,6 +46,8 @@ protected:
   const Real _D_floor;
   const Real _gamma_n0;
   const Real _phi_max;
+  const MooseEnum _crowding_model;
+  const Real _crowd_exp;
   const Real _n_c1;
   const unsigned int _n_c2;
   const Real _n_c1_pow;

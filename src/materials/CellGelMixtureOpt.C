@@ -56,6 +56,7 @@ CellGelMixtureOpt::validParams()
   params.addRequiredParam<Real>("G_cell", "Shear modulus of cell phase");
   params.addRequiredParam<Real>("q_cell", "q = -2nu/(1-2nu) for cell phase, where nu is Poisson ratio");
   params.addRequiredParam<Real>("k_exp_max","Max isotropic expansion rate after ramping (sets time scale)");
+  params.addParam<Real>("ke_ramp_T", 2.0, "Ramp time for ke smoothstep activation.");
   params.addRequiredParam<Real>("c1", "Expansion ramp paramter1 (time at which the rate ramps)");
   params.addRequiredParam<Real>("c2", "Expansion ramp paramter2 (steepness of ramp)");
   params.addParam<Real>("press_str", std::numeric_limits<Real>::quiet_NaN(),"Cell pressure threshold/scale for stress-inhibited growth gate g_p (preferred name)");
@@ -79,6 +80,11 @@ CellGelMixtureOpt::validParams()
   params.addParam<Real>("D_nutrient", 0.1, "Nutrient diffusivity used in the TL pull-back (length^2/time in chosen units).");
   params.addParam<bool>("use_crowding_diffusion", true,
                      "If true, use crowding law D_phys = D_nutrient*(1-phi_cell)/(1+phi_cell/2); otherwise D_phys = D_nutrient.");
+  MooseEnum crowding_model("maxwell bruggeman percolation", "maxwell");
+  params.addParam<MooseEnum>("crowding_model", crowding_model,
+                             "Crowding model for D_phys when use_crowding_diffusion=true.");
+  params.addParam<Real>("phi_max", 1.0, "Percolation model crowding cutoff.");
+  params.addParam<Real>("crowd_exp", 2.0, "Exponent for bruggeman/percolation crowding models.");
   params.addParam<Real>("D_phys_floor", 0.0, "Floor on physical diffusivity for numerical stability.");
   params.addParam<Real>("J_floor", 1e-12, "Floor on Jacobian used in diffusion pull-back.");
 
@@ -86,6 +92,19 @@ CellGelMixtureOpt::validParams()
   params.addParam<Real>("smooth_eps_c", 1e-12, "Smoothing epsilon for concentration/phi clamps.");
   params.addParam<Real>("smooth_eps_D", 1e-12, "Smoothing epsilon for diffusivity floor.");
   params.addParam<Real>("smooth_eps_J", 1e-8, "Smoothing epsilon for Jacobian floor.");
+  params.addParam<bool>("gate_gp_on_ke", true, "Apply pressure gate gp on ke.");
+  params.addParam<bool>("gate_fa_on_ke", true, "Apply nutrient gate fa on ke.");
+  params.addParam<bool>("gate_gp_on_kh", false, "Apply pressure gate gp on kh.");
+  params.addParam<bool>("gate_fa_on_kh", true, "Apply nutrient gate fa on kh.");
+  params.addParam<Real>("k_rho_max", 0.0, "Optional division contribution to volumetric growth ke.");
+  params.addParam<bool>("gate_gp_on_krho", true, "Apply pressure gate gp on krho.");
+  params.addParam<bool>("gate_fa_on_krho", true, "Apply nutrient gate fa on krho.");
+  params.addParam<Real>("krho_ramp_T", 2.0, "Ramp time for krho. Defaults to ke_ramp_T when not set.");
+  params.addParam<bool>("enable_isotropic_growth", true,
+                        "Enable isotropic volumetric growth contribution (ke).");
+  params.addParam<bool>("enable_deviatoric_growth", true,
+                        "Enable deviatoric growth drive in bE_cell evolution and kh update.");
+  params.addParam<bool>("enable_T1", true, "Enable T1 gate evolution.");
 
   // ---- initial microstructure / reference cell fraction field (optional) ----
   params.addCoupledVar("phi_ref_ic", "Optional field used to initialize phi_cell_ref at t=0 (seed with RandomIC for speckled 3D). ");
@@ -101,6 +120,7 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _G_cell(getParam<Real>("G_cell")),
     _q_cell(getParam<Real>("q_cell")),
     _k_exp_max(getParam<Real>("k_exp_max")),
+    _ke_ramp_T(getParam<Real>("ke_ramp_T")),
     _c1(getParam<Real>("c1")),
     _c2(getParam<Real>("c2")),
     _press_str(!std::isnan(getParam<Real>("press_str")) ? getParam<Real>("press_str") : getParam<Real>("press0")),
@@ -122,6 +142,21 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _smooth_eps_c(getParam<Real>("smooth_eps_c")),
     _smooth_eps_D(getParam<Real>("smooth_eps_D")),
     _smooth_eps_J(getParam<Real>("smooth_eps_J")),
+    _crowding_model(getParam<MooseEnum>("crowding_model")),
+    _phi_max(getParam<Real>("phi_max")),
+    _crowd_exp(getParam<Real>("crowd_exp")),
+    _gate_gp_on_ke(getParam<bool>("gate_gp_on_ke")),
+    _gate_fa_on_ke(getParam<bool>("gate_fa_on_ke")),
+    _gate_gp_on_kh(getParam<bool>("gate_gp_on_kh")),
+    _gate_fa_on_kh(getParam<bool>("gate_fa_on_kh")),
+    _k_rho_max(getParam<Real>("k_rho_max")),
+    _gate_gp_on_krho(getParam<bool>("gate_gp_on_krho")),
+    _gate_fa_on_krho(getParam<bool>("gate_fa_on_krho")),
+    _krho_ramp_T(parameters.isParamSetByUser("krho_ramp_T") ? getParam<Real>("krho_ramp_T")
+                                                            : getParam<Real>("ke_ramp_T")),
+    _enable_isotropic_growth(getParam<bool>("enable_isotropic_growth")),
+    _enable_deviatoric_growth(getParam<bool>("enable_deviatoric_growth")),
+    _enable_T1(getParam<bool>("enable_T1")),
 
     // nutrient coupling
     _has_n(isCoupled("n")),
@@ -181,6 +216,11 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _pressure(declareProperty<Real>("pressure")),
     _gp(declareProperty<Real>("gp")),
     _gate_tot(declareProperty<Real>("gate_tot")),
+    _gate_ke_out(declareProperty<Real>("gate_ke_out")),
+    _gate_kh_out(declareProperty<Real>("gate_kh_out")),
+    _ke_swelling_out(declareProperty<Real>("ke_swelling_out")),
+    _ke_div_out(declareProperty<Real>("ke_div_out")),
+    _ke_total_out(declareProperty<Real>("ke_total_out")),
     _gamma_n_local(declareProperty<Real>("gamma_n_local")),
     _D_eff(declareProperty<RealTensorValue>("D_eff")),
     _D_phys(declareProperty<Real>("D_phys")),
@@ -238,6 +278,11 @@ CellGelMixtureOpt::initQpStatefulProperties()
   _pressure[_qp]       = 0.0;
   _gp[_qp]             = 1.0;
   _gate_tot[_qp]       = 1.0;
+  _gate_ke_out[_qp]    = 1.0;
+  _gate_kh_out[_qp]    = 1.0;
+  _ke_swelling_out[_qp]= 0.0;
+  _ke_div_out[_qp]     = 0.0;
+  _ke_total_out[_qp]   = 0.0;
   _gamma_n_local[_qp]  = 0.0;              
   _n_source_ref[_qp]   = 0.0;
     
@@ -286,9 +331,12 @@ CellGelMixtureOpt::computeQpProperties()
 
   /* Update quantities at the current step n */
 
+  const Real dev_drive_old =
+      _enable_deviatoric_growth ? ((4.0 / 3.0) * kdiv_old + _kT1_old[_qp]) : 0.0;
+
   RankTwoTensor bE_cell_dot =
       ell_old * _bE_cell_old[_qp] + _bE_cell_old[_qp] * ell_old.transpose() - (2.0 / 3.0) * _ke_old[_qp] * _bE_cell_old[_qp] 
-      - ((4.0 / 3.0) * kdiv_old + _kT1_old[_qp]) * (_bE_cell_old[_qp] - (3.0 / _bE_cell_old[_qp].inverse().trace()) * I);
+      - dev_drive_old * (_bE_cell_old[_qp] - (3.0 / _bE_cell_old[_qp].inverse().trace()) * I);
 
 
   _bE_cell[_qp] = _bE_cell_old[_qp] + bE_cell_dot * dt;
@@ -322,10 +370,10 @@ CellGelMixtureOpt::computeQpProperties()
   // ramped "drive" (same form as before)
   //const Real k_exp0 = _k_exp_max - _k_exp_max / (1.0 + pow(_t / _c1, _c2));
 
-  const Real T = 2.0;
-  Real s = smooth_clamp(_t / T, 0.0, 1.0, _smooth_eps_c);
-  Real r = 6*std::pow(s,5) - 15*std::pow(s,4) + 10*std::pow(s,3);
-  const Real k_exp0 = _k_exp_max * r;
+  const Real T_ke = std::max(_ke_ramp_T, 1e-16);
+  const Real s_ke = smooth_clamp(_t / T_ke, 0.0, 1.0, _smooth_eps_c);
+  const Real r_ke = 6.0 * std::pow(s_ke, 5) - 15.0 * std::pow(s_ke, 4) + 10.0 * std::pow(s_ke, 3);
+  const Real k_exp0 = _k_exp_max * r_ke;
 
 
   // --- nutrient transport kinematics (Total Lagrangian pull-back of spatial diffusion) ---
@@ -341,7 +389,22 @@ CellGelMixtureOpt::computeQpProperties()
   if (_use_crowding_diffusion)
   {
     const Real phi = smooth_clamp(_phi_cell[_qp], 0.0, 0.999999, _smooth_eps_c);
-    D_phys = _D_nutrient * (1.0 - phi) / (1.0 + 0.5 * phi);
+    if (_crowding_model == "maxwell")
+      D_phys = _D_nutrient * (1.0 - phi) / (1.0 + 0.5 * phi);
+    else if (_crowding_model == "bruggeman")
+    {
+      const Real one_minus_phi = smooth_clamp(1.0 - phi, 0.0, 1.0, _smooth_eps_c);
+      D_phys = _D_nutrient * std::pow(one_minus_phi, _crowd_exp);
+    }
+    else if (_crowding_model == "percolation")
+    {
+      const Real phi_max = std::max(_phi_max, 1e-16);
+      const Real s_perc = smooth_clamp(1.0 - phi / phi_max, 0.0, 1.0, _smooth_eps_c);
+      D_phys = _D_nutrient * std::pow(s_perc, _crowd_exp);
+    }
+    else
+      mooseError("Unsupported crowding_model: ", _crowding_model);
+
     D_phys = smooth_max(D_phys, _D_phys_floor, _smooth_eps_D);
   }
   _D_phys[_qp] = D_phys;
@@ -402,15 +465,34 @@ CellGelMixtureOpt::computeQpProperties()
      
   _gp[_qp] = gp_here;
 
-  // ---- combined gate and final ke for *next* step ----
-  const Real gate_tot = fa_here * gp_here;
-  _gate_tot[_qp] = gate_tot;
+  // ---- split gates for mechanistic isolation (defaults preserve previous behavior) ----
+  const Real gate_ke = (_gate_fa_on_ke ? fa_here : 1.0) * (_gate_gp_on_ke ? gp_here : 1.0);
+  const Real gate_kh = (_gate_fa_on_kh ? fa_here : 1.0) * (_gate_gp_on_kh ? gp_here : 1.0);
 
-  _ke[_qp] = k_exp0 * gate_tot;
+  _gate_tot[_qp]    = gate_ke;
+  _gate_ke_out[_qp] = gate_ke;
+  _gate_kh_out[_qp] = gate_kh;
+
+  const Real ke_swelling = k_exp0 * gate_ke;
+
+  const Real T_krho = std::max(_krho_ramp_T, 1e-16);
+  const Real s_krho = smooth_clamp(_t / T_krho, 0.0, 1.0, _smooth_eps_c);
+  const Real r_krho = 6.0 * std::pow(s_krho, 5) - 15.0 * std::pow(s_krho, 4) + 10.0 * std::pow(s_krho, 3);
+  const Real k_rho0 = _k_rho_max * r_krho;
+  const Real gate_krho =
+      (_gate_fa_on_krho ? fa_here : 1.0) * (_gate_gp_on_krho ? gp_here : 1.0);
+  const Real ke_div = k_rho0 * gate_krho;
+  const Real ke_total_raw = ke_swelling + ke_div;
+  const Real ke_total = _enable_isotropic_growth ? ke_total_raw : 0.0;
+
+  _ke_swelling_out[_qp] = _enable_isotropic_growth ? ke_swelling : 0.0;
+  _ke_div_out[_qp]      = _enable_isotropic_growth ? ke_div : 0.0;
+  _ke_total_out[_qp]    = ke_total;
+  _ke[_qp]              = ke_total;
 
   // ---- cell number ratio eta ----
-  // Use gated volumetric rate; forward fd
-  const Real kh_here = fa_here * kdiv_old;
+  // preserve kh definition and gate decomposition; forward update
+  const Real kh_here = _enable_deviatoric_growth ? gate_kh * kdiv_old : 0.0;
   _kh[_qp] = kh_here;
   _eta[_qp] = _eta_old[_qp] * std::exp(kh_here * dt);
 
@@ -444,7 +526,7 @@ CellGelMixtureOpt::computeQpProperties()
 
   // ---- T1 gate: keep existing logistic by default; enable Hill if m_T1>0 ----
   // ---- T1 gate: skip work if disabled; otherwise logistic by default; enable Hill if m_T1>0 ----
-  if (_k_T1_max == 0.0)
+  if (!_enable_T1 || _k_T1_max == 0.0)
     _kT1[_qp] = 0.0;
   else if (_m_T1 > 0.0)
   {
@@ -546,12 +628,14 @@ CellGelMixtureOpt::computeQpPK2Stress()
 
       // Velocity gradient at old step for trial state
       const RankTwoTensor ell_old_trial = (F_trial - F_n) * Fn_inv * inv_dt;
-      const Real kh_trial = ell_old_trial.trace();
+      const Real kdiv_trial = ell_old_trial.trace();
+      const Real dev_drive_trial =
+          _enable_deviatoric_growth ? ((4.0 / 3.0) * kdiv_trial + _kT1_old[_qp]) : 0.0;
 
       // --- cell phase trial update ---
       // --- using OLD ell and OLD states to form be_dot_trial
       RankTwoTensor bE_cell_dot_trial = ell_old_trial * _bE_cell_old[_qp] + _bE_cell_old[_qp] * ell_old_trial.transpose() -
-          (2.0 / 3.0) * _ke_old[_qp] * _bE_cell_old[_qp] - ((4.0 / 3.0) * kh_trial + _kT1_old[_qp]) * (_bE_cell_old[_qp] - (3.0 / bE_cell_inv_trace) * RankTwoTensor::Identity());
+          (2.0 / 3.0) * _ke_old[_qp] * _bE_cell_old[_qp] - dev_drive_trial * (_bE_cell_old[_qp] - (3.0 / bE_cell_inv_trace) * RankTwoTensor::Identity());
 
 
       //--- complete cell trial be and stress update ----
