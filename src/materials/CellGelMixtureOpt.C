@@ -96,6 +96,13 @@ CellGelMixtureOpt::validParams()
   params.addParam<bool>("gate_fa_on_ke", true, "Apply nutrient gate fa on ke.");
   params.addParam<bool>("gate_gp_on_kh", false, "Apply pressure gate gp on kh.");
   params.addParam<bool>("gate_fa_on_kh", true, "Apply nutrient gate fa on kh.");
+  MooseEnum gp_ke_lag_mode("none p_old filter", "none");
+  params.addParam<MooseEnum>(
+      "gp_ke_lag_mode",
+      gp_ke_lag_mode,
+      "Lag mode for gp used in ke gate: none (baseline), p_old, or filter.");
+  params.addParam<Real>("gp_ke_lag_tau", 0.0, "Filter lag time (hours) for gp->ke gate in filter mode.");
+  params.addParam<Real>("gp_ke_lag_floor", 0.0, "Optional lower floor applied to lagged gp used by ke gate.");
   params.addParam<Real>("k_rho_max", 0.0, "Optional division contribution to volumetric growth ke.");
   params.addParam<bool>("gate_gp_on_krho", true, "Apply pressure gate gp on krho.");
   params.addParam<bool>("gate_fa_on_krho", true, "Apply nutrient gate fa on krho.");
@@ -149,6 +156,9 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _gate_fa_on_ke(getParam<bool>("gate_fa_on_ke")),
     _gate_gp_on_kh(getParam<bool>("gate_gp_on_kh")),
     _gate_fa_on_kh(getParam<bool>("gate_fa_on_kh")),
+    _gp_ke_lag_mode(getParam<MooseEnum>("gp_ke_lag_mode")),
+    _gp_ke_lag_tau(getParam<Real>("gp_ke_lag_tau")),
+    _gp_ke_lag_floor(getParam<Real>("gp_ke_lag_floor")),
     _k_rho_max(getParam<Real>("k_rho_max")),
     _gate_gp_on_krho(getParam<bool>("gate_gp_on_krho")),
     _gate_fa_on_krho(getParam<bool>("gate_fa_on_krho")),
@@ -183,6 +193,7 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
 
 
     _sigma_cell(declareProperty<RankTwoTensor>("sigma_cell")),
+    _sigma_cell_old(getMaterialPropertyOld<RankTwoTensor>("sigma_cell")),
     _sigma_pmat(declareProperty<RankTwoTensor>("sigma_pmat")),
     _cauchy_stress(declareProperty<RankTwoTensor>("cauchy_stress")),
     _pk1_stress(declareProperty<RankTwoTensor>("pk1_stress")),
@@ -215,7 +226,12 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _fa(declareProperty<Real>("fa")),
     _pressure(declareProperty<Real>("pressure")),
     _gp(declareProperty<Real>("gp")),
+    _gp_ke_filt(declareProperty<Real>("gp_ke_filt")),
+    _gp_ke_filt_old(getMaterialPropertyOld<Real>("gp_ke_filt")),
     _gate_tot(declareProperty<Real>("gate_tot")),
+    _gp_raw_out(declareProperty<Real>("gp_raw_out")),
+    _gp_ke_used_out(declareProperty<Real>("gp_ke_used_out")),
+    _gp_ke_lag_alpha_out(declareProperty<Real>("gp_ke_lag_alpha_out")),
     _gate_ke_out(declareProperty<Real>("gate_ke_out")),
     _gate_kh_out(declareProperty<Real>("gate_kh_out")),
     _ke_swelling_out(declareProperty<Real>("ke_swelling_out")),
@@ -277,6 +293,10 @@ CellGelMixtureOpt::initQpStatefulProperties()
   _fa[_qp]             = 1.0;
   _pressure[_qp]       = 0.0;
   _gp[_qp]             = 1.0;
+  _gp_ke_filt[_qp]     = 1.0;
+  _gp_raw_out[_qp]     = 1.0;
+  _gp_ke_used_out[_qp] = 1.0;
+  _gp_ke_lag_alpha_out[_qp] = 0.0;
   _gate_tot[_qp]       = 1.0;
   _gate_ke_out[_qp]    = 1.0;
   _gate_kh_out[_qp]    = 1.0;
@@ -464,9 +484,37 @@ CellGelMixtureOpt::computeQpProperties()
   const Real gp_here    = (press_cell < 0.0) ? std::exp(-std::log(2.0) * x * x) : 1.0;
      
   _gp[_qp] = gp_here;
+  _gp_raw_out[_qp] = gp_here;
+
+  Real gp_ke_used = gp_here;
+  Real gp_ke_alpha = 0.0;
+  if (_gp_ke_lag_mode == "p_old")
+  {
+    const Real press_cell_old = _sigma_cell_old[_qp].trace() / 3.0;
+    const Real x_old          = press_cell_old / _press_str;
+    gp_ke_used = (press_cell_old < 0.0) ? std::exp(-std::log(2.0) * x_old * x_old) : 1.0;
+    _gp_ke_filt[_qp] = gp_ke_used;
+  }
+  else if (_gp_ke_lag_mode == "filter")
+  {
+    const Real tau = std::max(_gp_ke_lag_tau, 1e-16);
+    gp_ke_alpha = dt / (tau + dt);
+    const Real gp_prev = (_t <= std::numeric_limits<Real>::epsilon()) ? gp_here : _gp_ke_filt_old[_qp];
+    gp_ke_used = gp_prev + gp_ke_alpha * (gp_here - gp_prev);
+    _gp_ke_filt[_qp] = gp_ke_used;
+  }
+  else
+    _gp_ke_filt[_qp] = gp_here;
+
+  if (_gp_ke_lag_floor > 0.0)
+    gp_ke_used = smooth_max(gp_ke_used, _gp_ke_lag_floor, _smooth_eps_c);
+  gp_ke_used = smooth_clamp(gp_ke_used, 0.0, 1.0, _smooth_eps_c);
+
+  _gp_ke_used_out[_qp] = gp_ke_used;
+  _gp_ke_lag_alpha_out[_qp] = gp_ke_alpha;
 
   // ---- split gates for mechanistic isolation (defaults preserve previous behavior) ----
-  const Real gate_ke = (_gate_fa_on_ke ? fa_here : 1.0) * (_gate_gp_on_ke ? gp_here : 1.0);
+  const Real gate_ke = (_gate_fa_on_ke ? fa_here : 1.0) * (_gate_gp_on_ke ? gp_ke_used : 1.0);
   const Real gate_kh = (_gate_fa_on_kh ? fa_here : 1.0) * (_gate_gp_on_kh ? gp_here : 1.0);
 
   _gate_tot[_qp]    = gate_ke;

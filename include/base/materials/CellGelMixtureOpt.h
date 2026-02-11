@@ -58,6 +58,9 @@ protected:
   const bool _gate_fa_on_ke;
   const bool _gate_gp_on_kh;
   const bool _gate_fa_on_kh;
+  const MooseEnum _gp_ke_lag_mode;
+  const Real _gp_ke_lag_tau;
+  const Real _gp_ke_lag_floor;
   const Real _k_rho_max;
   const bool _gate_gp_on_krho;
   const bool _gate_fa_on_krho;
@@ -103,6 +106,7 @@ protected:
   MaterialProperty<Real> & _phi_cell;
   MaterialProperty<Real> & _phi_ref_from_ic;
   MaterialProperty<RankTwoTensor> & _sigma_cell;
+  const MaterialProperty<RankTwoTensor> & _sigma_cell_old;
   MaterialProperty<RankTwoTensor> & _sigma_pmat;
   MaterialProperty<RankTwoTensor> & _cauchy_stress;
   MaterialProperty<Real> & _eta;
@@ -115,7 +119,12 @@ protected:
   MaterialProperty<Real> & _fa;
   MaterialProperty<Real> & _pressure;
   MaterialProperty<Real> & _gp;
+  MaterialProperty<Real> & _gp_ke_filt;
+  const MaterialProperty<Real> & _gp_ke_filt_old;
   MaterialProperty<Real> & _gate_tot;
+  MaterialProperty<Real> & _gp_raw_out;
+  MaterialProperty<Real> & _gp_ke_used_out;
+  MaterialProperty<Real> & _gp_ke_lag_alpha_out;
   MaterialProperty<Real> & _gate_ke_out;
   MaterialProperty<Real> & _gate_kh_out;
   MaterialProperty<Real> & _ke_swelling_out;

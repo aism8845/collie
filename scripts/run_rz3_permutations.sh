@@ -9,6 +9,15 @@ CASE_DIR="${CASE_DIR:-inputs/2DN/suites/jacobian_solver/permutations_rz3}"
 OUT_ROOT="${OUT_ROOT:-outputs/suites/jacobian_solver/permutations_rz3}"
 QUICK="${QUICK:-0}"
 SUMMARY="${OUT_ROOT}/summary.txt"
+RUN_OVERRIDES="${RUN_OVERRIDES:-}"
+QUIET="${QUIET:-0}"
+
+EXTRA_ARGS=()
+if [[ -n "${RUN_OVERRIDES}" ]]; then
+  # Space-delimited CLI overrides, e.g.
+  # RUN_OVERRIDES="Executioner/end_time=30 Outputs/exodus=false"
+  read -r -a EXTRA_ARGS <<< "${RUN_OVERRIDES}"
+fi
 
 mkdir -p "${OUT_ROOT}"
 
@@ -55,8 +64,13 @@ for case_file in "${CASE_FILES[@]}"; do
   start_ts="$(date +%s)"
 
   set +e
-  mpirun -np "${NP}" ./collie-opt -i "${case_file}" --output-formatter perf_graph 2>&1 | tee "${log_file}"
-  rc=${PIPESTATUS[0]}
+  if [[ "${QUIET}" == "1" ]]; then
+    mpirun -np "${NP}" ./collie-opt -i "${case_file}" --output-formatter perf_graph "${EXTRA_ARGS[@]}" > "${log_file}" 2>&1
+    rc=$?
+  else
+    mpirun -np "${NP}" ./collie-opt -i "${case_file}" --output-formatter perf_graph "${EXTRA_ARGS[@]}" 2>&1 | tee "${log_file}"
+    rc=${PIPESTATUS[0]}
+  fi
   set -e
 
   end_ts="$(date +%s)"
@@ -78,6 +92,27 @@ for case_file in "${CASE_FILES[@]}"; do
   bulk_n="NA"
   corner_ke="NA"
   bulk_ke="NA"
+
+  if [[ ! -f "${solver_csv}" ]]; then
+    solver_base="$(
+      awk '
+        BEGIN { in_solver = 0 }
+        /^\s*\[solver_watch\]\s*$/ { in_solver = 1; next }
+        in_solver && /^\s*\[\]\s*$/ { in_solver = 0 }
+        in_solver && /^\s*file_base\s*=/ {
+          sub(/^[^=]*=/, "", $0)
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+          gsub(/^'\''|'\''$/, "", $0)
+          gsub(/^"|"$/, "", $0)
+          print $0
+          exit
+        }
+      ' "${case_file}"
+    )"
+    if [[ -n "${solver_base}" && -f "${solver_base}.csv" ]]; then
+      solver_csv="${solver_base}.csv"
+    fi
+  fi
 
   if [[ -f "${solver_csv}" ]]; then
     read -r last_time min_elem_quality min_volume_ratio avg_volume_ratio avg_phi_cell avg_ke_total corner_n bulk_n corner_ke bulk_ke < <(
