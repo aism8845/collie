@@ -379,6 +379,7 @@
     deformation_gradient_property = deformation_gradient
     exclude_radius_factor = 2.0
     execute_on = 'timestep_end'
+    outputs = 'none'
   []
 []
 
@@ -386,7 +387,18 @@
   [dt]
     type = TimestepSize
     execute_on = 'timestep_end'
-    outputs = 'mesh_watch'
+    outputs = 'mesh_watch solver_watch'
+  []
+
+  [nonlinear_its]
+    type = NumNonlinearIterations
+    execute_on = 'timestep_end'
+    outputs = 'solver_watch'
+  []
+  [linear_its]
+    type = NumLinearIterations
+    execute_on = 'timestep_end'
+    outputs = 'solver_watch'
   []
 
   [min_elem_quality]
@@ -507,40 +519,47 @@
     pp_names = 'J_min_1'
     expression = 'if(J_min_1 < 0.20, 1, 0)'
     execute_on = 'timestep_end'
-    outputs = 'console'
+    outputs = 'console solver_watch'
   []
 
   [avg_J]
     type     = ElementAverageValue
     variable = volume_ratio
+    outputs = 'solver_watch'
   []
   [vol_change_pct]
     type       = ParsedPostprocessor
     expression = '(avg_J - 1.0)*100.0'
     pp_names   = 'avg_J'
+    outputs = 'solver_watch'
   []
 
   [avg_phi_cell]
     type     = ElementAverageValue
     variable = phi_cell
+    outputs = 'solver_watch'
   []
   [avg_fa]
     type     = ElementAverageValue
     variable = fa
+    outputs = 'solver_watch'
   []
 
   [avg_Diso]
     type     = ElementAverageValue
     variable = D_iso
+    outputs = 'solver_watch'
   []
 
   [avg_Dphys]
     type     = ElementAverageValue
     variable = D_phys_out
+    outputs = 'solver_watch'
   []
   [avg_Dref]
     type     = ElementAverageValue
     variable = D_ref_out
+    outputs = 'solver_watch'
   []
 []
 
@@ -589,5 +608,12 @@
     file_base = outputs/mesh_watch
     execute_on = 'TIMESTEP_END'
     show = 'dt J_min_1 J_min_1_x J_min_1_y metric2_min_1 metric2_min_1_x metric2_min_1_y J_min_2 J_min_2_x J_min_2_y metric2_min_2 metric2_min_2_x metric2_min_2_y'
+  []
+
+  [solver_watch]
+    type = CSV
+    file_base = outputs/solver_watch
+    execute_on = 'TIMESTEP_END'
+    show = 'dt nonlinear_its linear_its avg_Dphys avg_Dref avg_J avg_fa avg_phi_cell mesh_distortion_warning vol_change_pct'
   []
 []
