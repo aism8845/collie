@@ -41,6 +41,36 @@ run_and_log() {
   "$@" 2>&1 | tee "${log}"
 }
 
+run_and_log_allow_fail() {
+  local name="$1"
+  shift
+  local log="${RUN_DIR}/${name}.log"
+  local ec
+
+  echo
+  echo "==> ${name}"
+  echo "+ $*"
+
+  set +e
+  "$@" 2>&1 | tee "${log}"
+  ec=$?
+  set -e
+
+  return "${ec}"
+}
+
+is_mpi_sandbox_error() {
+  local log="$1"
+  grep -Eq \
+    'xnet_pep_sock_create\(\).*Operation not permitted|shm_open error .*Permission denied|OFI endpoint open failed|HYDU_sock_listen .*Operation not permitted' \
+    "${log}"
+}
+
+is_not_enough_slots_error() {
+  local log="$1"
+  grep -Eq 'not enough slots available|There are not enough slots available' "${log}"
+}
+
 summarize_jacobian() {
   local log="$1"
   local ratio
@@ -260,14 +290,22 @@ echo "Smoke debug run directory: ${RUN_DIR}"
 echo "SMOKE_NP=${SMOKE_NP}  SMOKE_INPUT=${SMOKE_INPUT}  SMOKE_END_TIME=${SMOKE_END_TIME}"
 echo "SMOKE_SLOW_NL_ITS=${SMOKE_SLOW_NL_ITS}  SMOKE_SLOW_LIN_ITS=${SMOKE_SLOW_LIN_ITS}  SMOKE_DT_DROP_FACTOR=${SMOKE_DT_DROP_FACTOR}"
 
-run_and_log input_check \
+if ! run_and_log_allow_fail input_check \
   ./collie-opt \
   --error \
   --error-unused \
   --check-input \
-  -i "${SMOKE_INPUT}"
+  -i "${SMOKE_INPUT}"; then
+  if is_mpi_sandbox_error "${RUN_DIR}/input_check.log"; then
+    echo "ERROR: MPI/libfabric initialization is blocked by current sandbox permissions." >&2
+    echo "Hint: restart with permissions that allow local listener sockets and POSIX shared memory." >&2
+    exit 2
+  fi
+  echo "ERROR: input_check failed; see ${RUN_DIR}/input_check.log" >&2
+  exit 1
+fi
 
-run_and_log mpi_solver_physics \
+if ! run_and_log_allow_fail mpi_solver_physics \
   mpiexec -n "${SMOKE_NP}" ./collie-opt \
   -i "${SMOKE_INPUT}" \
   --error \
@@ -276,7 +314,29 @@ run_and_log mpi_solver_physics \
   Outputs/exodus=false \
   Outputs/perf_graph=false \
   Debug/show_var_residual_norms=true \
-  Executioner/petsc_options='-snes_monitor -snes_converged_reason -ksp_monitor_short -ksp_converged_reason'
+  Executioner/petsc_options='-snes_monitor -snes_converged_reason -ksp_monitor_short -ksp_converged_reason'; then
+  if is_not_enough_slots_error "${RUN_DIR}/mpi_solver_physics.log" && [[ "${SMOKE_NP}" != "1" ]]; then
+    echo "WARNING: MPI slots were insufficient for SMOKE_NP=${SMOKE_NP}; retrying with SMOKE_NP=1"
+    run_and_log mpi_solver_physics_retry_np1 \
+      mpiexec -n 1 ./collie-opt \
+      -i "${SMOKE_INPUT}" \
+      --error \
+      --error-unused \
+      Executioner/end_time="${SMOKE_END_TIME}" \
+      Outputs/exodus=false \
+      Outputs/perf_graph=false \
+      Debug/show_var_residual_norms=true \
+      Executioner/petsc_options='-snes_monitor -snes_converged_reason -ksp_monitor_short -ksp_converged_reason'
+  else
+    if is_mpi_sandbox_error "${RUN_DIR}/mpi_solver_physics.log"; then
+      echo "ERROR: MPI/libfabric initialization is blocked by current sandbox permissions." >&2
+      echo "Hint: restart with permissions that allow local listener sockets and POSIX shared memory." >&2
+      exit 2
+    fi
+    echo "ERROR: mpi_solver_physics failed; see ${RUN_DIR}/mpi_solver_physics.log" >&2
+    exit 1
+  fi
+fi
 
 summarize_watch_diagnostics
 
