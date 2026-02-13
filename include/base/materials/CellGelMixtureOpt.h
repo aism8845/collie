@@ -37,7 +37,9 @@ protected:
   const Real _k_T1_max;
   const Real _chi_str;
   const Real _press_str;
+  const Real _press_gate_smooth;
   const Real _beta_T1;
+  const Real _chi_T1_smooth;
   const Real _m_T1;
   const Real _q_cell;
   const Real _k_diss_0;

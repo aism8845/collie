@@ -42,6 +42,20 @@ namespace
   {
     return smooth_min(smooth_max(x, a, eps), b, eps);
   }
+
+  inline Real clamp01(const Real x)
+  {
+    if (x <= 0.0)
+      return 0.0;
+    if (x >= 1.0)
+      return 1.0;
+    return x;
+  }
+
+  inline Real smoothstep5(const Real r)
+  {
+    return r * r * r * (10.0 + r * (-15.0 + 6.0 * r));
+  }
 } // namespace
 
 
@@ -61,11 +75,15 @@ CellGelMixtureOpt::validParams()
   params.addRequiredParam<Real>("c2", "Expansion ramp paramter2 (steepness of ramp)");
   params.addParam<Real>("press_str", std::numeric_limits<Real>::quiet_NaN(),"Cell pressure threshold/scale for stress-inhibited growth gate g_p (preferred name)");
   params.addParam<Real>("press0", std::numeric_limits<Real>::quiet_NaN(),"Alias for press_str (kept for older input files)");
+  params.addParam<Real>("press_gate_smooth", 0.0,
+                        "C2 smoothing half-width for pressure gate around p_cell=0 (same units as p_cell; if 0, use legacy piecewise gp).");
 
   // Optional (with default values shown)
   params.addParam<Real>("k_T1_max", 0.0, "T1 logistic amplitude (0 disables)");
   params.addParam<Real>("chi_str", 0.20, "shape distortion threshold for T1 yielding.");
   params.addParam<Real>("beta_T1", 100., "T1 logistic steepness parameter");
+  params.addParam<Real>("chi_T1_smooth", 0.0,
+                        "C2 smoothing half-width for T1 gate around chi_str (in chi units; if 0, use existing logistic/Hill).");
   params.addParam<Real>("epsilon", 1e-8, "Epsilon for Miehe-style algorithmic tangent");
 
   params.addParam<Real>("G_gel", 1.0, "shear modulus of gel matrix");
@@ -131,9 +149,11 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _c1(getParam<Real>("c1")),
     _c2(getParam<Real>("c2")),
     _press_str(!std::isnan(getParam<Real>("press_str")) ? getParam<Real>("press_str") : getParam<Real>("press0")),
+    _press_gate_smooth(getParam<Real>("press_gate_smooth")),
     _k_T1_max(getParam<Real>("k_T1_max")),
     _chi_str(getParam<Real>("chi_str")),
     _beta_T1(getParam<Real>("beta_T1")),
+    _chi_T1_smooth(getParam<Real>("chi_T1_smooth")),
     _G_gel(getParam<Real>("G_gel")),
     _k_diss_0(getParam<Real>("k_diss_0")),
     _phi_cell_0(getParam<Real>("phi_cell_0")),
@@ -479,9 +499,21 @@ CellGelMixtureOpt::computeQpProperties()
 
   // ---- pressure gate gp(p_cell): suppresses expansion under compression ----
   // Convention: press_cell < 0 in compression (since sigma trace/3 is negative).
+  const auto gp_from_pressure = [this](const Real press_cell_local) {
+    const Real x = press_cell_local / _press_str;
+    const Real g_comp = std::exp(-std::log(2.0) * x * x);
+
+    if (_press_gate_smooth <= 0.0)
+      return (press_cell_local < 0.0) ? g_comp : 1.0;
+
+    const Real ps = _press_gate_smooth;
+    const Real r = clamp01((press_cell_local + ps) / (2.0 * ps));
+    const Real w = smoothstep5(r);
+    return (1.0 - w) * g_comp + w;
+  };
+
   const Real press_cell = _sigma_cell[_qp].trace() / 3.0;
-  const Real x          = press_cell / _press_str;
-  const Real gp_here    = (press_cell < 0.0) ? std::exp(-std::log(2.0) * x * x) : 1.0;
+  const Real gp_here    = gp_from_pressure(press_cell);
      
   _gp[_qp] = gp_here;
   _gp_raw_out[_qp] = gp_here;
@@ -491,8 +523,7 @@ CellGelMixtureOpt::computeQpProperties()
   if (_gp_ke_lag_mode == "p_old")
   {
     const Real press_cell_old = _sigma_cell_old[_qp].trace() / 3.0;
-    const Real x_old          = press_cell_old / _press_str;
-    gp_ke_used = (press_cell_old < 0.0) ? std::exp(-std::log(2.0) * x_old * x_old) : 1.0;
+    gp_ke_used = gp_from_pressure(press_cell_old);
     _gp_ke_filt[_qp] = gp_ke_used;
   }
   else if (_gp_ke_lag_mode == "filter")
@@ -590,6 +621,13 @@ CellGelMixtureOpt::computeQpProperties()
       gate_T1 = (den > 0.0) ? num / den : 0.0;
     }
 
+    _kT1[_qp] = _k_T1_max * gate_T1;
+  }
+  else if (_chi_T1_smooth > 0.0)
+  {
+    const Real s = _chi_T1_smooth;
+    const Real r = clamp01((_chi[_qp] - _chi_str + s) / (2.0 * s));
+    const Real gate_T1 = smoothstep5(r);
     _kT1[_qp] = _k_T1_max * gate_T1;
   }
   else
