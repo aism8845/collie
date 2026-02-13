@@ -110,14 +110,38 @@
 []
 
 [Kernels]
-  # nutrient PDE
-  [n_td]   type = TimeDerivative   variable = n []
-  [n_diff] type = MatAnisoDiffusion variable = n diffusivity = D_eff []
+  [u_n_offdiag_x]
+    type = TLStressDivergenceNutrientOffDiag
+    variable = ux
+    component = 0
+    displacements = 'ux uy'
+    large_kinematics = true
+    n = n
+  []
+  [u_n_offdiag_y]
+    type = TLStressDivergenceNutrientOffDiag
+    variable = uy
+    component = 1
+    displacements = 'ux uy'
+    large_kinematics = true
+    n = n
+  []
+  [n_td]
+    type = ADJnTimeDerivative
+    variable = n
+    coef = J_nutr
+    coef_dot = Jdot_nutr
+    include_jdot = true
+  []
+  [n_diff]
+    type = ADMatTensorDiffusion
+    variable = n
+    diffusivity = D_eff_nutr
+  []
   [n_rxn]
-    type          = MatReaction
-    variable      = n
-    reaction_rate = n_source_ref
-    args          = n
+    type = ADMatReactionSigned
+    variable = n
+    reaction_rate = n_source_ref_nutr
   []
 []
 
@@ -184,6 +208,29 @@
     n_c2     = 12.0
     gamma_n0 = 20.0
     n        = n
+  []
+  [nutrient_tl]
+    type  = ADNutrientTLTransport
+    block = 0
+
+    disp_r = ux
+    disp_z = uy
+
+    n            = n
+    phi_cell_ref = phi_cell_ref
+    D0           = 0.1
+    D_floor      = 1e-12
+    gamma_n0     = 20.0
+    phi_max      = 1.0
+    n_c1         = 0.05
+    n_c2         = 12.0
+    smooth_eps_c = 1e-6
+  []
+  [nutr_kin]
+    type = ADComputeAxisymmetricRZFiniteStrain
+    block = 0
+    displacements = 'ux uy'
+    base_name = nutr_
   []
 []
 
