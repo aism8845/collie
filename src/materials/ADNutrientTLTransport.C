@@ -4,6 +4,7 @@
 #include "MooseEnum.h"
 
 #include <cmath>
+#include "metaphysicl/raw_type.h"
 
 registerMooseObject("collieApp", ADNutrientTLTransport);
 
@@ -65,6 +66,12 @@ ADNutrientTLTransport::validParams()
   params.addRequiredParam<unsigned int>("n_c2", "Hill exponent for f_a(n) (integer).");
   params.addParam<Real>("smooth_eps_c", 1e-12, "Smoothing epsilon for concentration/phi clamps.");
   params.addParam<Real>("smooth_eps_D", 1e-12, "Smoothing epsilon for diffusivity floor.");
+  params.addParam<bool>("safe_F_inv",
+                        false,
+                        "If true, avoid F inverse when det(F) < J_inv_floor and zero local TL diffusion.");
+  params.addParam<Real>("J_inv_floor",
+                        1e-10,
+                        "Determinant floor for optional safe_F_inv guard in TL inversion.");
 
   params.addClassDescription(
       "AD TL nutrient transport coefficients with full coupling to displacements (builds F from AD displacement gradients).");
@@ -109,6 +116,8 @@ ADNutrientTLTransport::ADNutrientTLTransport(const InputParameters & parameters)
     _n_c1_pow(std::pow(_n_c1, static_cast<Real>(_n_c2))),
     _smooth_eps_c(getParam<Real>("smooth_eps_c")),
     _smooth_eps_D(getParam<Real>("smooth_eps_D")),
+    _safe_F_inv(getParam<bool>("safe_F_inv")),
+    _J_inv_floor(getParam<Real>("J_inv_floor")),
 
     _J_nutr(declareADProperty<Real>("J_nutr")),
     _Jdot_nutr(declareADProperty<Real>("Jdot_nutr")),
@@ -118,7 +127,9 @@ ADNutrientTLTransport::ADNutrientTLTransport(const InputParameters & parameters)
 
     _D_phys_nutr(declareADProperty<Real>("D_phys_nutr")),
     _D_ref_nutr(declareADProperty<Real>("D_ref_nutr")),
-    _D_iso_nutr(declareADProperty<Real>("D_iso_nutr"))
+    _D_iso_nutr(declareADProperty<Real>("D_iso_nutr")),
+    _J_mech_nutr(declareProperty<Real>("J_mech_nutr")),
+    _F_inv_guard_flag_nutr(declareProperty<Real>("F_inv_guard_flag_nutr"))
 {
   if (_radial_coord > 2)
     mooseError("ADNutrientTLTransport: 'radial_coord' must be 0, 1, or 2.");
@@ -163,6 +174,24 @@ ADNutrientTLTransport::computeQpProperties()
 
   const ADReal J = F.det();
   _J_nutr[_qp] = J;
+
+  const Real J_raw = MetaPhysicL::raw_value(J);
+  _J_mech_nutr[_qp] = J_raw;
+  _F_inv_guard_flag_nutr[_qp] = 0.0;
+  if (!std::isfinite(J_raw) || J_raw <= 0.0)
+  {
+    const long long elem_id = _current_elem ? static_cast<long long>(_current_elem->id()) : -1;
+    mooseError("ADNutrientTLTransport detF invalid: t=",
+               _t,
+               " dt=",
+               _dt,
+               " elem=",
+               elem_id,
+               " qp=",
+               _qp,
+               " detF=",
+               J_raw);
+  }
 
   // --- Helper: J from OLD states (Real) ---
   auto J_from_old = [&](const VariableValue & urv,
@@ -256,13 +285,18 @@ ADNutrientTLTransport::computeQpProperties()
   _D_ref_nutr[_qp]  = J * D_phys;
 
   // --- K = J * D_phys * F^{-1} * F^{-T} ---
-  const ADRankTwoTensor Finv = F.inverse();
-  const ADRankTwoTensor A    = Finv * Finv.transpose();
-
   ADRealTensorValue K;
-  for (unsigned int i = 0; i < 3; ++i)
-    for (unsigned int j = 0; j < 3; ++j)
-      K(i,j) = J * D_phys * A(i,j);
+  K.zero();
+  if (_safe_F_inv && J_raw < _J_inv_floor)
+    _F_inv_guard_flag_nutr[_qp] = 1.0;
+  else
+  {
+    const ADRankTwoTensor Finv = F.inverse();
+    const ADRankTwoTensor A = Finv * Finv.transpose();
+    for (unsigned int i = 0; i < 3; ++i)
+      for (unsigned int j = 0; j < 3; ++j)
+        K(i, j) = J * D_phys * A(i, j);
+  }
 
   _D_eff_nutr[_qp] = K;
 

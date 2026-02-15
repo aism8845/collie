@@ -10,6 +10,7 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#include <vector>
 
 using namespace std;
 
@@ -55,6 +56,59 @@ namespace
   inline Real smoothstep5(const Real r)
   {
     return r * r * r * (10.0 + r * (-15.0 + 6.0 * r));
+  }
+
+  inline RankTwoTensor symmetrize(const RankTwoTensor & A)
+  {
+    return 0.5 * (A + A.transpose());
+  }
+
+  inline void tensorSpectralDiagnostics(const RankTwoTensor & A, Real & det_out, Real & min_eig_out)
+  {
+    const RankTwoTensor As = symmetrize(A);
+    det_out = As.det();
+
+    std::vector<Real> eigvals(3);
+    As.symmetricEigenvalues(eigvals);
+    min_eig_out = std::min(eigvals[0], std::min(eigvals[1], eigvals[2]));
+  }
+
+  inline bool projectToSpd(RankTwoTensor & A, const Real eig_floor, Real & clamp_amount)
+  {
+    const RankTwoTensor As = symmetrize(A);
+    std::vector<Real> eigvals(3);
+    RankTwoTensor eigvecs;
+    As.symmetricEigenvaluesEigenvectors(eigvals, eigvecs);
+
+    bool projected = false;
+    clamp_amount = 0.0;
+    const Real floor = std::max(eig_floor, 1e-18);
+    for (unsigned int i = 0; i < 3; ++i)
+    {
+      if (!std::isfinite(eigvals[i]) || eigvals[i] < floor)
+      {
+        const Real from = std::isfinite(eigvals[i]) ? eigvals[i] : 0.0;
+        clamp_amount += std::max(0.0, floor - from);
+        eigvals[i] = floor;
+        projected = true;
+      }
+    }
+
+    if (!projected)
+    {
+      A = As;
+      return false;
+    }
+
+    RankTwoTensor Apro;
+    Apro.zero();
+    for (unsigned int i = 0; i < 3; ++i)
+    {
+      const RealVectorValue vi = eigvecs.column(i);
+      Apro += eigvals[i] * RankTwoTensor::outerProduct(vi, vi);
+    }
+    A = symmetrize(Apro);
+    return true;
   }
 } // namespace
 
@@ -134,6 +188,18 @@ CellGelMixtureOpt::validParams()
   // ---- initial microstructure / reference cell fraction field (optional) ----
   params.addCoupledVar("phi_ref_ic", "Optional field used to initialize phi_cell_ref at t=0 (seed with RandomIC for speckled 3D). ");
   params.addParam<Real>("m_T1", 0.0,"Hill exponent for T1 gating. 0 uses the existing logistic gate.");
+  params.addParam<bool>(
+      "be_spd_project",
+      false,
+      "If true, optionally project bE state tensors to SPD with eigenvalue floor when they become non-admissible.");
+  params.addParam<Real>("be_eig_floor",
+                        1e-12,
+                        "Eigenvalue floor used when be_spd_project=true for SPD projection of bE tensors.");
+  MooseEnum be_project_mode("cell pmat both", "both");
+  params.addParam<MooseEnum>(
+      "be_project_mode",
+      be_project_mode,
+      "Which bE tensors are projected when be_spd_project=true: cell, pmat, or both.");
   return params;
 }
 
@@ -160,6 +226,9 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _n_c1(getParam<Real>("n_c1")),
     _n_c2(getParam<Real>("n_c2")),
     _m_T1(getParam<Real>("m_T1")),
+    _be_spd_project(getParam<bool>("be_spd_project")),
+    _be_eig_floor(getParam<Real>("be_eig_floor")),
+    _be_project_mode(getParam<MooseEnum>("be_project_mode")),
     _gamma_n0(getParam<Real>("gamma_n0")),
     _D_nutrient(getParam<Real>("D_nutrient")),
     _use_crowding_diffusion(getParam<bool>("use_crowding_diffusion")),
@@ -242,6 +311,7 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
 
     // diagnostics / couplings
     _volume_ratio(declareProperty<Real>("volume_ratio")),
+    _J_mech(declareProperty<Real>("J_mech")),
     _kh(declareProperty<Real>("kh")),
     _fa(declareProperty<Real>("fa")),
     _pressure(declareProperty<Real>("pressure")),
@@ -258,6 +328,17 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _ke_div_out(declareProperty<Real>("ke_div_out")),
     _ke_total_out(declareProperty<Real>("ke_total_out")),
     _gamma_n_local(declareProperty<Real>("gamma_n_local")),
+    _det_bE_cell(declareProperty<Real>("det_bE_cell")),
+    _min_eig_bE_cell(declareProperty<Real>("min_eig_bE_cell")),
+    _det_bE_pmat(declareProperty<Real>("det_bE_pmat")),
+    _min_eig_bE_pmat(declareProperty<Real>("min_eig_bE_pmat")),
+    _JE_cell_raw_det(declareProperty<Real>("JE_cell_raw_det")),
+    _be_cell_nonspd_flag(declareProperty<Real>("be_cell_nonspd_flag")),
+    _be_pmat_nonspd_flag(declareProperty<Real>("be_pmat_nonspd_flag")),
+    _be_cell_projected_flag(declareProperty<Real>("be_cell_projected_flag")),
+    _be_pmat_projected_flag(declareProperty<Real>("be_pmat_projected_flag")),
+    _be_cell_projection_amount(declareProperty<Real>("be_cell_projection_amount")),
+    _be_pmat_projection_amount(declareProperty<Real>("be_pmat_projection_amount")),
     _D_eff(declareProperty<RealTensorValue>("D_eff")),
     _D_phys(declareProperty<Real>("D_phys")),
     _D_ref(declareProperty<Real>("D_ref")),
@@ -309,6 +390,7 @@ CellGelMixtureOpt::initQpStatefulProperties()
 
   // diagnostics / couplings
   _volume_ratio[_qp]   = 1.0;
+  _J_mech[_qp]         = 1.0;
   _kh[_qp]             = 0.0;
   _fa[_qp]             = 1.0;
   _pressure[_qp]       = 0.0;
@@ -324,6 +406,17 @@ CellGelMixtureOpt::initQpStatefulProperties()
   _ke_div_out[_qp]     = 0.0;
   _ke_total_out[_qp]   = 0.0;
   _gamma_n_local[_qp]  = 0.0;              
+  _det_bE_cell[_qp]    = 1.0;
+  _min_eig_bE_cell[_qp] = 1.0;
+  _det_bE_pmat[_qp]    = 1.0;
+  _min_eig_bE_pmat[_qp] = 1.0;
+  _JE_cell_raw_det[_qp] = 1.0;
+  _be_cell_nonspd_flag[_qp] = 0.0;
+  _be_pmat_nonspd_flag[_qp] = 0.0;
+  _be_cell_projected_flag[_qp] = 0.0;
+  _be_pmat_projected_flag[_qp] = 0.0;
+  _be_cell_projection_amount[_qp] = 0.0;
+  _be_pmat_projection_amount[_qp] = 0.0;
   _n_source_ref[_qp]   = 0.0;
     
   
@@ -365,6 +458,40 @@ CellGelMixtureOpt::computeQpProperties()
 
   /* important notations:  old: n, current : n+1 */
 
+  const Real nan = std::numeric_limits<Real>::quiet_NaN();
+  const long long elem_id = _current_elem ? static_cast<long long>(_current_elem->id()) : -1;
+
+  const Real J_def = _F[_qp].det();
+  const Real J_old = _F_old[_qp].det();
+
+  auto fail_non_admissible = [&](const std::string & reason,
+                                 const Real det_bE_cell,
+                                 const Real min_eig_bE_cell,
+                                 const Real det_bE_pmat,
+                                 const Real min_eig_bE_pmat) {
+    mooseError("CellGelMixtureOpt non-admissible: ",
+               reason,
+               " t=", _t,
+               " dt=", _dt,
+               " elem=", elem_id,
+               " qp=", _qp,
+               " J=", J_def,
+               " J_old=", J_old,
+               " det_bE_cell=", det_bE_cell,
+               " min_eig_bE_cell=", min_eig_bE_cell,
+               " det_bE_pmat=", det_bE_pmat,
+               " min_eig_bE_pmat=", min_eig_bE_pmat,
+               " press_old=", _pressure[_qp],
+               " gp_old=", _gp[_qp],
+               " gate_old=", _gate_tot[_qp]);
+  };
+
+  if (!std::isfinite(J_def) || !std::isfinite(J_old) || J_def <= 0.0 || J_old <= 0.0)
+    fail_non_admissible("invalid deformation gradient determinant", nan, nan, nan, nan);
+
+  _volume_ratio[_qp] = J_def;
+  _J_mech[_qp] = J_def;
+
   /* Find velocity gradient at time n-1 */
   RankTwoTensor ell_old = (_F[_qp] - _F_old[_qp]) * _F_old[_qp].inverse() / dt;
   const Real kdiv_old = ell_old.trace();
@@ -378,32 +505,115 @@ CellGelMixtureOpt::computeQpProperties()
       ell_old * _bE_cell_old[_qp] + _bE_cell_old[_qp] * ell_old.transpose() - (2.0 / 3.0) * _ke_old[_qp] * _bE_cell_old[_qp] 
       - dev_drive_old * (_bE_cell_old[_qp] - (3.0 / _bE_cell_old[_qp].inverse().trace()) * I);
 
+  RankTwoTensor bE_cell_new = _bE_cell_old[_qp] + bE_cell_dot * dt;
+  Real det_bE_cell = nan;
+  Real min_eig_bE_cell = nan;
+  tensorSpectralDiagnostics(bE_cell_new, det_bE_cell, min_eig_bE_cell);
 
-  _bE_cell[_qp] = _bE_cell_old[_qp] + bE_cell_dot * dt;
+  _be_cell_nonspd_flag[_qp] =
+      (!std::isfinite(det_bE_cell) || !std::isfinite(min_eig_bE_cell) || det_bE_cell <= 0.0 ||
+       min_eig_bE_cell <= 0.0)
+          ? 1.0
+          : 0.0;
+  _be_cell_projected_flag[_qp] = 0.0;
+  _be_cell_projection_amount[_qp] = 0.0;
 
-  const Real JE_cell = sqrt(_bE_cell[_qp].det());
+  if (_be_spd_project && (_be_project_mode == "cell" || _be_project_mode == "both") &&
+      (_be_cell_nonspd_flag[_qp] > 0.5 || min_eig_bE_cell < _be_eig_floor))
+  {
+    Real clamp = 0.0;
+    if (projectToSpd(bE_cell_new, _be_eig_floor, clamp))
+    {
+      _be_cell_projected_flag[_qp] = 1.0;
+      _be_cell_projection_amount[_qp] = clamp;
+      tensorSpectralDiagnostics(bE_cell_new, det_bE_cell, min_eig_bE_cell);
+    }
+  }
 
-  _sigma_cell[_qp] = (_G_cell / JE_cell) * (_bE_cell[_qp] - pow(JE_cell, _q_cell) * I);
+  if (!std::isfinite(det_bE_cell) || !std::isfinite(min_eig_bE_cell) || det_bE_cell <= 0.0)
+    fail_non_admissible("bE_cell invalid before JE_cell sqrt", det_bE_cell, min_eig_bE_cell, nan, nan);
 
-  const Real JE_pmat_old = sqrt(_bE_pmat_old[_qp].det());
+  _bE_cell[_qp] = symmetrize(bE_cell_new);
+  _det_bE_cell[_qp] = det_bE_cell;
+  _min_eig_bE_cell[_qp] = min_eig_bE_cell;
+  _JE_cell_raw_det[_qp] = det_bE_cell;
+
+  const Real JE_cell = std::sqrt(det_bE_cell);
+  _sigma_cell[_qp] = (_G_cell / JE_cell) * (_bE_cell[_qp] - std::pow(JE_cell, _q_cell) * I);
+  if (!std::isfinite(_sigma_cell[_qp].L2norm()))
+    fail_non_admissible("sigma_cell not finite", det_bE_cell, min_eig_bE_cell, nan, nan);
+
+  Real det_bE_pmat_old = nan;
+  Real min_eig_bE_pmat_old = nan;
+  tensorSpectralDiagnostics(_bE_pmat_old[_qp], det_bE_pmat_old, min_eig_bE_pmat_old);
+  if (!std::isfinite(det_bE_pmat_old) || !std::isfinite(min_eig_bE_pmat_old) || det_bE_pmat_old <= 0.0)
+    fail_non_admissible("bE_pmat_old invalid before inverse/sqrt",
+                        det_bE_cell,
+                        min_eig_bE_cell,
+                        det_bE_pmat_old,
+                        min_eig_bE_pmat_old);
+
+  const Real JE_pmat_old = std::sqrt(det_bE_pmat_old);
 
   RankTwoTensor bE_pmat_dot =
       ell_old * _bE_pmat_old[_qp] + _bE_pmat_old[_qp] * ell_old.transpose() -
       _k_diss_old[_qp] * (_bE_pmat_old[_qp] - (3.0 / (_bE_pmat_old[_qp].inverse().trace() * JE_pmat_old)) * I);
 
-  _bE_pmat[_qp] = _bE_pmat_old[_qp] + bE_pmat_dot * dt;
+  RankTwoTensor bE_pmat_new = _bE_pmat_old[_qp] + bE_pmat_dot * dt;
+  Real det_bE_pmat = nan;
+  Real min_eig_bE_pmat = nan;
+  tensorSpectralDiagnostics(bE_pmat_new, det_bE_pmat, min_eig_bE_pmat);
 
-  // --- mixture geometry & phase fractions (using per-QP reference fraction) ---
-  const Real J_def = _F[_qp].det();
-  _volume_ratio[_qp] = J_def;
+  _be_pmat_nonspd_flag[_qp] =
+      (!std::isfinite(det_bE_pmat) || !std::isfinite(min_eig_bE_pmat) || det_bE_pmat <= 0.0 ||
+       min_eig_bE_pmat <= 0.0)
+          ? 1.0
+          : 0.0;
+  _be_pmat_projected_flag[_qp] = 0.0;
+  _be_pmat_projection_amount[_qp] = 0.0;
+
+  if (_be_spd_project && (_be_project_mode == "pmat" || _be_project_mode == "both") &&
+      (_be_pmat_nonspd_flag[_qp] > 0.5 || min_eig_bE_pmat < _be_eig_floor))
+  {
+    Real clamp = 0.0;
+    if (projectToSpd(bE_pmat_new, _be_eig_floor, clamp))
+    {
+      _be_pmat_projected_flag[_qp] = 1.0;
+      _be_pmat_projection_amount[_qp] = clamp;
+      tensorSpectralDiagnostics(bE_pmat_new, det_bE_pmat, min_eig_bE_pmat);
+    }
+  }
+
+  if (!std::isfinite(det_bE_pmat) || !std::isfinite(min_eig_bE_pmat) || det_bE_pmat <= 0.0)
+    fail_non_admissible("bE_pmat invalid before JE_pmat sqrt",
+                        det_bE_cell,
+                        min_eig_bE_cell,
+                        det_bE_pmat,
+                        min_eig_bE_pmat);
+
+  _bE_pmat[_qp] = symmetrize(bE_pmat_new);
+  _det_bE_pmat[_qp] = det_bE_pmat;
+  _min_eig_bE_pmat[_qp] = min_eig_bE_pmat;
 
   const Real phi_ref = _phi_cell_ref[_qp];
-  _phi_cell[_qp] = (J_def * phi_ref) / ((J_def - 1.0) * phi_ref + 1.0);
+  const Real phi_den = (J_def - 1.0) * phi_ref + 1.0;
+  if (!std::isfinite(phi_den) || std::abs(phi_den) < 1e-14)
+    fail_non_admissible(
+        "phi mapping denominator invalid", det_bE_cell, min_eig_bE_cell, det_bE_pmat, min_eig_bE_pmat);
+  _phi_cell[_qp] = (J_def * phi_ref) / phi_den;
+  if (!std::isfinite(_phi_cell[_qp]) || _phi_cell[_qp] <= 0.0)
+    fail_non_admissible("phi_cell invalid", det_bE_cell, min_eig_bE_cell, det_bE_pmat, min_eig_bE_pmat);
 
-  const Real JE_pmat = sqrt(_bE_pmat[_qp].det());
+  const Real JE_pmat = std::sqrt(det_bE_pmat);
   const Real k_pmat = (4.0 / 3.0) * _G_gel * (1 - _phi_cell[_qp]) / _phi_cell[_qp]; // bulk modulus of porous matrix
 
   _sigma_pmat[_qp] = (_G_gel / pow53(JE_pmat)) * _bE_pmat[_qp].deviatoric() + k_pmat * (JE_pmat - 1) * I;
+  if (!std::isfinite(_sigma_pmat[_qp].L2norm()))
+    fail_non_admissible("sigma_pmat not finite",
+                        det_bE_cell,
+                        min_eig_bE_cell,
+                        det_bE_pmat,
+                        min_eig_bE_pmat);
 
   /* ---- update internal state variables (for next step) ---- */
 

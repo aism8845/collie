@@ -41,6 +41,9 @@ protected:
   const Real _beta_T1;
   const Real _chi_T1_smooth;
   const Real _m_T1;
+  const bool _be_spd_project;
+  const Real _be_eig_floor;
+  const MooseEnum _be_project_mode;
   const Real _q_cell;
   const Real _k_diss_0;
   const Real _n_c1;
@@ -117,6 +120,7 @@ protected:
   MaterialProperty<Real> & _kT1;
   MaterialProperty<Real> & _k_diss;
   MaterialProperty<Real> & _volume_ratio;
+  MaterialProperty<Real> & _J_mech;
   MaterialProperty<Real> & _kh;
   MaterialProperty<Real> & _fa;
   MaterialProperty<Real> & _pressure;
@@ -133,6 +137,17 @@ protected:
   MaterialProperty<Real> & _ke_div_out;
   MaterialProperty<Real> & _ke_total_out;
   MaterialProperty<Real> & _gamma_n_local;
+  MaterialProperty<Real> & _det_bE_cell;
+  MaterialProperty<Real> & _min_eig_bE_cell;
+  MaterialProperty<Real> & _det_bE_pmat;
+  MaterialProperty<Real> & _min_eig_bE_pmat;
+  MaterialProperty<Real> & _JE_cell_raw_det;
+  MaterialProperty<Real> & _be_cell_nonspd_flag;
+  MaterialProperty<Real> & _be_pmat_nonspd_flag;
+  MaterialProperty<Real> & _be_cell_projected_flag;
+  MaterialProperty<Real> & _be_pmat_projected_flag;
+  MaterialProperty<Real> & _be_cell_projection_amount;
+  MaterialProperty<Real> & _be_pmat_projection_amount;
   MaterialProperty<RealTensorValue> & _D_eff;
   MaterialProperty<Real> & _n_source_ref;
   MaterialProperty<RankTwoTensor> & _dcauchy_stress_dn;

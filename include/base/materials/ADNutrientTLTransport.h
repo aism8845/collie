@@ -53,6 +53,8 @@ protected:
   const Real _n_c1_pow;
   const Real _smooth_eps_c;
   const Real _smooth_eps_D;
+  const bool _safe_F_inv;
+  const Real _J_inv_floor;
 
   // outputs used by AD kernels
   ADMaterialProperty<Real> & _J_nutr;
@@ -65,4 +67,6 @@ protected:
   ADMaterialProperty<Real> & _D_phys_nutr;
   ADMaterialProperty<Real> & _D_ref_nutr;
   ADMaterialProperty<Real> & _D_iso_nutr;
+  MaterialProperty<Real> & _J_mech_nutr;
+  MaterialProperty<Real> & _F_inv_guard_flag_nutr;
 };
