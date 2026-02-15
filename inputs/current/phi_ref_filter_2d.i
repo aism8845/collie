@@ -1,7 +1,7 @@
 # phi_ref_filter2d_RZ_generatedmesh.i
 # Correlated random field (RandomIC + diffusion filter) on the SAME RZ GeneratedMesh you provided.
 
-phi0 = 0.06
+phi0 = 0.085
 Aphi = 0.03
 lc   = 0.001      # NOTE: choose lc >= a few * local element size to actually see "splotches"
 
@@ -85,7 +85,7 @@ t_end = ${fparse lc*lc / Dflt}
 [Outputs]
   [out]
     type      = Exodus
-    file_base = inputs/legacy/2DN/phi_ref_filter2d_out
+    file_base = inputs/current/phi_ref_filter2d_out
     time_step_interval = 1
   []
 []

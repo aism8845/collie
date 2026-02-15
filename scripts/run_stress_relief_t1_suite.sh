@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
 NP="${NP:-8}"
-CASE_DIR="inputs/2DN/suites/stress_relief_t1/permutations_rz3"
+CASE_DIR="inputs/legacy/2DN/suites/stress_relief_t1/permutations_rz3"
 OUT_ROOT="outputs/suites/stress_relief_t1"
 QUICK_DIR="${OUT_ROOT}/quick30_mesh60"
 FULL_DIR="${OUT_ROOT}/full48"

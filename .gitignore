@@ -168,6 +168,10 @@ framework/contrib/exodiff/exodiff
 peacock_*.i
 peacock_*.e
 
+# Local experiment/debug bundles (not source)
+outputs/
+external/
+
 # On linux, shared libs end in .0 sometimes
 libpcre-opt*
 libpcre-dbg*

@@ -736,8 +736,9 @@
   nl_abs_tol = 1e-8
   nl_max_its = 100
 
-  petsc_options_iname = '-snes_type -snes_linesearch_type -ksp_type -ksp_rtol -pc_type -sub_pc_type -snes_rtol -snes_atol'
-  petsc_options_value =  'newtonls bt fgmres 2e-5 bjacobi ilu 1e-4 1e-7'
+  petsc_options = '-snes_converged_reason -ksp_converged_reason'
+  petsc_options_iname = '-snes_type -snes_linesearch_type -ksp_type -pc_type -pc_factor_mat_solver_type -snes_rtol -snes_atol'
+  petsc_options_value =  'newtonls bt preonly lu mumps 1e-4 1e-7'
 
   automatic_scaling = true
 
@@ -752,7 +753,7 @@
 []
 
 [Outputs]
-  exodus = false
+  exodus = true
   perf_graph = false
 
   [mesh_watch]

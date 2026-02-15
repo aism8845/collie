@@ -5,7 +5,7 @@ set -euo pipefail
 #   ./dump_and_map_empty_rows.sh /abs/or/rel/path/to/app-opt /abs/or/rel/path/to/case.i [run_dir]
 #
 APP_RAW="${1:?Need app binary path, e.g. ./collieTestApp-opt}"
-INP_RAW="${2:?Need input file, e.g. ./inputs/2DN/RZ1.i}"
+INP_RAW="${2:?Need input file, e.g. ./inputs/current/RZ3_RD_AD_patch.i}"
 RUNDIR="${3:-_zero_row_debug}"
 
 # Resolve to absolute paths BEFORE we cd anywhere

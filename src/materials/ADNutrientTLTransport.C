@@ -178,7 +178,7 @@ ADNutrientTLTransport::computeQpProperties()
   const Real J_raw = MetaPhysicL::raw_value(J);
   _J_mech_nutr[_qp] = J_raw;
   _F_inv_guard_flag_nutr[_qp] = 0.0;
-  if (!std::isfinite(J_raw) || J_raw <= 0.0)
+  if ((!std::isfinite(J_raw) || J_raw <= 0.0) && !_safe_F_inv)
   {
     const long long elem_id = _current_elem ? static_cast<long long>(_current_elem->id()) : -1;
     mooseError("ADNutrientTLTransport detF invalid: t=",
@@ -192,6 +192,10 @@ ADNutrientTLTransport::computeQpProperties()
                " detF=",
                J_raw);
   }
+  const bool guarded_inv = _safe_F_inv && (!std::isfinite(J_raw) || J_raw < _J_inv_floor);
+  if (guarded_inv)
+    _F_inv_guard_flag_nutr[_qp] = 1.0;
+  const ADReal J_eff = guarded_inv ? ADReal(_J_inv_floor) : J;
 
   // --- Helper: J from OLD states (Real) ---
   auto J_from_old = [&](const VariableValue & urv,
@@ -282,20 +286,18 @@ ADNutrientTLTransport::computeQpProperties()
 
   // diagnostics (unique names)
   _D_phys_nutr[_qp] = D_phys;
-  _D_ref_nutr[_qp]  = J * D_phys;
+  _D_ref_nutr[_qp]  = J_eff * D_phys;
 
   // --- K = J * D_phys * F^{-1} * F^{-T} ---
   ADRealTensorValue K;
   K.zero();
-  if (_safe_F_inv && J_raw < _J_inv_floor)
-    _F_inv_guard_flag_nutr[_qp] = 1.0;
-  else
+  if (!guarded_inv)
   {
     const ADRankTwoTensor Finv = F.inverse();
     const ADRankTwoTensor A = Finv * Finv.transpose();
     for (unsigned int i = 0; i < 3; ++i)
       for (unsigned int j = 0; j < 3; ++j)
-        K(i, j) = J * D_phys * A(i, j);
+        K(i, j) = J_eff * D_phys * A(i, j);
   }
 
   _D_eff_nutr[_qp] = K;
@@ -313,5 +315,5 @@ ADNutrientTLTransport::computeQpProperties()
   const ADReal gamma_local = _gamma_n0 * phi * fa;
 
   // ADMatReaction adds (-rate*n); to add +J*gamma*n, set rate = -J*gamma
-  _n_source_ref_nutr[_qp] = -J * gamma_local;
+  _n_source_ref_nutr[_qp] = -J_eff * gamma_local;
 }

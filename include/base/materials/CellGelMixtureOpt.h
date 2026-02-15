@@ -56,6 +56,7 @@ protected:
   const Real _smooth_eps_c;
   const Real _smooth_eps_D;
   const Real _smooth_eps_J;
+  const Real _J_soft_floor;
   const MooseEnum _crowding_model;
   const Real _phi_max;
   const Real _crowd_exp;

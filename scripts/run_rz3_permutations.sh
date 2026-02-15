@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
 NP="${NP:-8}"
-CASE_DIR="${CASE_DIR:-inputs/2DN/suites/jacobian_solver/permutations_rz3}"
+CASE_DIR="${CASE_DIR:-inputs/legacy/2DN/suites/jacobian_solver/permutations_rz3}"
 OUT_ROOT="${OUT_ROOT:-outputs/suites/jacobian_solver/permutations_rz3}"
 QUICK="${QUICK:-0}"
 SUMMARY="${OUT_ROOT}/summary.txt"

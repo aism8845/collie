@@ -164,6 +164,10 @@ CellGelMixtureOpt::validParams()
   params.addParam<Real>("smooth_eps_c", 1e-12, "Smoothing epsilon for concentration/phi clamps.");
   params.addParam<Real>("smooth_eps_D", 1e-12, "Smoothing epsilon for diffusivity floor.");
   params.addParam<Real>("smooth_eps_J", 1e-8, "Smoothing epsilon for Jacobian floor.");
+  params.addParam<Real>(
+      "J_soft_floor",
+      0.0,
+      "Optional constitutive Jacobian floor. If > 0, J is clamped to this floor in constitutive/source updates.");
   params.addParam<bool>("gate_gp_on_ke", true, "Apply pressure gate gp on ke.");
   params.addParam<bool>("gate_fa_on_ke", true, "Apply nutrient gate fa on ke.");
   params.addParam<bool>("gate_gp_on_kh", false, "Apply pressure gate gp on kh.");
@@ -238,6 +242,7 @@ CellGelMixtureOpt::CellGelMixtureOpt(const InputParameters & parameters)
     _smooth_eps_c(getParam<Real>("smooth_eps_c")),
     _smooth_eps_D(getParam<Real>("smooth_eps_D")),
     _smooth_eps_J(getParam<Real>("smooth_eps_J")),
+    _J_soft_floor(getParam<Real>("J_soft_floor")),
     _crowding_model(getParam<MooseEnum>("crowding_model")),
     _phi_max(getParam<Real>("phi_max")),
     _crowd_exp(getParam<Real>("crowd_exp")),
@@ -463,6 +468,7 @@ CellGelMixtureOpt::computeQpProperties()
 
   const Real J_def = _F[_qp].det();
   const Real J_old = _F_old[_qp].det();
+  Real J_eval = J_def;
 
   auto fail_non_admissible = [&](const std::string & reason,
                                  const Real det_bE_cell,
@@ -486,11 +492,17 @@ CellGelMixtureOpt::computeQpProperties()
                " gate_old=", _gate_tot[_qp]);
   };
 
-  if (!std::isfinite(J_def) || !std::isfinite(J_old) || J_def <= 0.0 || J_old <= 0.0)
+  if (_J_soft_floor > 0.0)
+  {
+    if (!std::isfinite(J_eval))
+      J_eval = _J_soft_floor;
+    J_eval = std::max(J_eval, _J_soft_floor);
+  }
+  else if (!std::isfinite(J_def) || !std::isfinite(J_old) || J_def <= 0.0 || J_old <= 0.0)
     fail_non_admissible("invalid deformation gradient determinant", nan, nan, nan, nan);
 
-  _volume_ratio[_qp] = J_def;
-  _J_mech[_qp] = J_def;
+  _volume_ratio[_qp] = J_eval;
+  _J_mech[_qp] = J_eval;
 
   /* Find velocity gradient at time n-1 */
   RankTwoTensor ell_old = (_F[_qp] - _F_old[_qp]) * _F_old[_qp].inverse() / dt;
@@ -596,11 +608,11 @@ CellGelMixtureOpt::computeQpProperties()
   _min_eig_bE_pmat[_qp] = min_eig_bE_pmat;
 
   const Real phi_ref = _phi_cell_ref[_qp];
-  const Real phi_den = (J_def - 1.0) * phi_ref + 1.0;
+  const Real phi_den = (J_eval - 1.0) * phi_ref + 1.0;
   if (!std::isfinite(phi_den) || std::abs(phi_den) < 1e-14)
     fail_non_admissible(
         "phi mapping denominator invalid", det_bE_cell, min_eig_bE_cell, det_bE_pmat, min_eig_bE_pmat);
-  _phi_cell[_qp] = (J_def * phi_ref) / phi_den;
+  _phi_cell[_qp] = (J_eval * phi_ref) / phi_den;
   if (!std::isfinite(_phi_cell[_qp]) || _phi_cell[_qp] <= 0.0)
     fail_non_admissible("phi_cell invalid", det_bE_cell, min_eig_bE_cell, det_bE_pmat, min_eig_bE_pmat);
 
@@ -632,7 +644,7 @@ CellGelMixtureOpt::computeQpProperties()
   const RankTwoTensor A = F_inv * F_inv.transpose();  // = F^{-1}F^{-T}
 
   // ---- nutrient diffusivity (physical crowding law, then TL pull-back) ----
-  const Real J_use = smooth_max(J_def, _J_floor, _smooth_eps_J);
+  const Real J_use = smooth_max(J_eval, _J_floor, _smooth_eps_J);
 
   // Physical (spatial) diffusivity in the current configuration:
   Real D_phys = _D_nutrient;
@@ -797,7 +809,7 @@ CellGelMixtureOpt::computeQpProperties()
     _gamma_n_local[_qp] = _gamma_n0 * _phi_cell[_qp] * fa_here;
   }
 
-  _n_source_ref[_qp] = - J_def * _gamma_n_local[_qp]; // pulled-back reaction rate for MatReaction: - (n_source_ref) * n
+  _n_source_ref[_qp] = - J_eval * _gamma_n_local[_qp]; // pulled-back reaction rate for MatReaction: - (n_source_ref) * n
 
   // Provide derivative for the sink term Jacobian: d(n_source_ref)/d(n)
   // This is the *key* piece that prevents SNES from stalling when the gate fa(n) turns on.
@@ -806,7 +818,7 @@ CellGelMixtureOpt::computeQpProperties()
     if (_gamma_n0 == 0.0)
       (*_dn_source_ref_dn)[_qp] = 0.0;
     else
-      (*_dn_source_ref_dn)[_qp] = J_def * (-_gamma_n0 * _phi_cell[_qp] * dfa_dn_here);
+      (*_dn_source_ref_dn)[_qp] = J_eval * (-_gamma_n0 * _phi_cell[_qp] * dfa_dn_here);
   }
 
   // ---- shape metric chi ----

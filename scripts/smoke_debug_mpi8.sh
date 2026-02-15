@@ -11,19 +11,34 @@ cd "${ROOT}"
 #
 # Default MPI ranks remain 8. Override with SMOKE_NP.
 SMOKE_NP="${SMOKE_NP:-8}"
-SMOKE_INPUT="${SMOKE_INPUT:-inputs/2DN/RZ3_RD_AD_patch.i}"
+SMOKE_INPUT="${SMOKE_INPUT:-inputs/current/RZ3_RD_AD_patch.i}"
 SMOKE_END_TIME="${SMOKE_END_TIME:-0.03}"
+SMOKE_REQUIRE_CURRENT_INPUT="${SMOKE_REQUIRE_CURRENT_INPUT:-1}"
 
 SMOKE_RUN_JACOBIAN="${SMOKE_RUN_JACOBIAN:-1}"
-SMOKE_JAC_INPUT="${SMOKE_JAC_INPUT:-inputs/legacy/2D/RZ5.i}"
+SMOKE_JAC_INPUT="${SMOKE_JAC_INPUT:-${SMOKE_INPUT}}"
 SMOKE_JAC_END_TIME="${SMOKE_JAC_END_TIME:-0.01}"
-# Optional fail threshold, e.g. SMOKE_JAC_FAIL_THRESHOLD=1e-3
-SMOKE_JAC_FAIL_THRESHOLD="${SMOKE_JAC_FAIL_THRESHOLD:-}"
+# Jacobian fail threshold defaults on for regression catching.
+SMOKE_JAC_FAIL_THRESHOLD="${SMOKE_JAC_FAIL_THRESHOLD:-1e-3}"
+SMOKE_JAC_AUTO_MESH_REDUCE="${SMOKE_JAC_AUTO_MESH_REDUCE:-1}"
+SMOKE_JAC_NX="${SMOKE_JAC_NX:-40}"
+SMOKE_JAC_NY="${SMOKE_JAC_NY:-12}"
+SMOKE_JAC_OVERRIDES="${SMOKE_JAC_OVERRIDES:-}"
+SMOKE_JAC_VIEW="${SMOKE_JAC_VIEW:-0}"
 
 # Slowdown hotspot thresholds for report generation.
 SMOKE_SLOW_NL_ITS="${SMOKE_SLOW_NL_ITS:-6}"
 SMOKE_SLOW_LIN_ITS="${SMOKE_SLOW_LIN_ITS:-40}"
 SMOKE_DT_DROP_FACTOR="${SMOKE_DT_DROP_FACTOR:-0.67}"
+
+# Physics sanity thresholds (warning by default; fail when enabled).
+SMOKE_FAIL_ON_PHYSICS="${SMOKE_FAIL_ON_PHYSICS:-0}"
+SMOKE_FAIL_ON_NUMERICS="${SMOKE_FAIL_ON_NUMERICS:-0}"
+SMOKE_N_MIN_FLOOR="${SMOKE_N_MIN_FLOOR:--1e-8}"
+SMOKE_J_MIN_FLOOR="${SMOKE_J_MIN_FLOOR:-0.0}"
+SMOKE_DPHYS_MIN_FLOOR="${SMOKE_DPHYS_MIN_FLOOR:-1e-12}"
+SMOKE_GATE_MIN_FLOOR="${SMOKE_GATE_MIN_FLOOR:-0.0}"
+SMOKE_GATE_MAX_CEIL="${SMOKE_GATE_MAX_CEIL:-1.000001}"
 
 SMOKE_LOG_ROOT="${SMOKE_LOG_ROOT:-outputs/smoke_debug}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
@@ -71,6 +86,30 @@ is_not_enough_slots_error() {
   grep -Eq 'not enough slots available|There are not enough slots available' "${log}"
 }
 
+looks_like_legacy_input() {
+  local input_path="$1"
+  [[ "${input_path}" == inputs/2DN/* ]] || \
+    [[ "${input_path}" == inputs/legacy/* ]] || \
+    [[ "${input_path}" == */inputs/2DN/* ]] || \
+    [[ "${input_path}" == */inputs/legacy/* ]]
+}
+
+require_smoke_input() {
+  local input_path="$1"
+  local label="$2"
+
+  if [[ ! -f "${input_path}" ]]; then
+    echo "ERROR: ${label} file does not exist: ${input_path}" >&2
+    exit 1
+  fi
+
+  if [[ "${SMOKE_REQUIRE_CURRENT_INPUT}" == "1" ]] && looks_like_legacy_input "${input_path}"; then
+    echo "ERROR: ${label} is pointing to legacy inputs: ${input_path}" >&2
+    echo "Set SMOKE_REQUIRE_CURRENT_INPUT=0 to bypass this guard intentionally." >&2
+    exit 1
+  fi
+}
+
 summarize_jacobian() {
   local log="$1"
   local ratio
@@ -112,6 +151,10 @@ build_solver_hotspots_csv() {
 
   awk -F, '
     function has(name) { return (name in idx) }
+    function missing(raw, low) {
+      low = tolower(raw)
+      return (raw == "" || low == "na" || low == "nan" || low == "+inf" || low == "-inf" || low == "inf")
+    }
     function sval(name, fallback, c) {
       c = idx[name]
       if (c)
@@ -123,7 +166,7 @@ build_solver_hotspots_csv() {
       if (!c)
         return fallback
       raw = $(c)
-      if (raw == "" || raw == "nan" || raw == "NaN")
+      if (missing(raw))
         return fallback
       return raw + 0
     }
@@ -195,6 +238,10 @@ write_slowdown_report() {
     echo
     echo "Run extrema:"
     awk -F, '
+      function missing(raw, low) {
+        low = tolower(raw)
+        return (raw == "" || low == "na" || low == "nan" || low == "+inf" || low == "-inf" || low == "inf")
+      }
       NR == 1 {
         for (i = 1; i <= NF; i++)
           idx[$i] = i
@@ -212,29 +259,44 @@ write_slowdown_report() {
         if (!seen || nl > max_nl) { max_nl = nl; max_nl_t = t }
         if (!seen || li > max_li) { max_li = li; max_li_t = t }
         if ("J_min_1" in idx) {
-          j = $(idx["J_min_1"]) + 0
-          if (!seen || j < min_j) { min_j = j; min_j_t = t }
-          seen_j = 1
+          raw = $(idx["J_min_1"])
+          if (!missing(raw)) {
+            j = raw + 0
+            if (!seen_j || j < min_j) { min_j = j; min_j_t = t }
+            seen_j = 1
+          }
         }
         if ("n_span" in idx) {
-          ns = $(idx["n_span"]) + 0
-          if (!seen || ns > max_n_span) { max_n_span = ns; max_n_span_t = t }
-          seen_n_span = 1
+          raw = $(idx["n_span"])
+          if (!missing(raw)) {
+            ns = raw + 0
+            if (!seen_n_span || ns > max_n_span) { max_n_span = ns; max_n_span_t = t }
+            seen_n_span = 1
+          }
         }
         if ("min_Dphys" in idx) {
-          dp = $(idx["min_Dphys"]) + 0
-          if (!seen || dp < min_dphys) { min_dphys = dp; min_dphys_t = t }
-          seen_dphys = 1
+          raw = $(idx["min_Dphys"])
+          if (!missing(raw)) {
+            dp = raw + 0
+            if (!seen_dphys || dp < min_dphys) { min_dphys = dp; min_dphys_t = t }
+            seen_dphys = 1
+          }
         }
         if ("min_gate_tot" in idx) {
-          gt = $(idx["min_gate_tot"]) + 0
-          if (!seen || gt < min_gate) { min_gate = gt; min_gate_t = t }
-          seen_gate = 1
+          raw = $(idx["min_gate_tot"])
+          if (!missing(raw)) {
+            gt = raw + 0
+            if (!seen_gate || gt < min_gate) { min_gate = gt; min_gate_t = t }
+            seen_gate = 1
+          }
         }
         if ("max_phi_cell" in idx) {
-          pc = $(idx["max_phi_cell"]) + 0
-          if (!seen || pc > max_phi_cell) { max_phi_cell = pc; max_phi_cell_t = t }
-          seen_phi = 1
+          raw = $(idx["max_phi_cell"])
+          if (!missing(raw)) {
+            pc = raw + 0
+            if (!seen_phi || pc > max_phi_cell) { max_phi_cell = pc; max_phi_cell_t = t }
+            seen_phi = 1
+          }
         }
         seen = 1
       }
@@ -262,10 +324,163 @@ write_slowdown_report() {
   } > "${report_txt}"
 }
 
+write_physics_sanity_report() {
+  local hotspots_csv="$1"
+  local report_txt="$2"
+  local rc
+
+  set +e
+  awk -F, \
+    -v n_floor="${SMOKE_N_MIN_FLOOR}" \
+    -v j_floor="${SMOKE_J_MIN_FLOOR}" \
+    -v d_floor="${SMOKE_DPHYS_MIN_FLOOR}" \
+    -v gate_floor="${SMOKE_GATE_MIN_FLOOR}" \
+    -v gate_ceil="${SMOKE_GATE_MAX_CEIL}" \
+    '
+      function missing(raw, low) {
+        low = tolower(raw)
+        return (raw == "" || low == "na" || low == "nan" || low == "+inf" || low == "-inf" || low == "inf")
+      }
+      NR == 1 {
+        for (i = 1; i <= NF; i++)
+          idx[$i] = i
+        next
+      }
+      NR > 1 {
+        seen = 1
+        if ("time" in idx && !missing($(idx["time"]))) {
+          t = $(idx["time"]) + 0
+          last_t = t
+        } else
+          t = 0
+
+        if ("n_min" in idx) {
+          raw = $(idx["n_min"])
+          if (!missing(raw)) {
+            n = raw + 0
+            if (!seen_n || n < min_n) { min_n = n; min_n_t = t; seen_n = 1 }
+          }
+        }
+        if ("J_min_1" in idx) {
+          raw = $(idx["J_min_1"])
+          if (!missing(raw)) {
+            j = raw + 0
+            if (!seen_j || j < min_j) { min_j = j; min_j_t = t; seen_j = 1 }
+          }
+        }
+        if ("min_Dphys" in idx) {
+          raw = $(idx["min_Dphys"])
+          if (!missing(raw)) {
+            d = raw + 0
+            if (!seen_d || d < min_d) { min_d = d; min_d_t = t; seen_d = 1 }
+          }
+        }
+        if ("min_gate_tot" in idx) {
+          raw = $(idx["min_gate_tot"])
+          if (!missing(raw)) {
+            gmin = raw + 0
+            if (!seen_gmin || gmin < min_g) { min_g = gmin; min_g_t = t; seen_gmin = 1 }
+          }
+        }
+        if ("max_gate_tot" in idx) {
+          raw = $(idx["max_gate_tot"])
+          if (!missing(raw)) {
+            gmax = raw + 0
+            if (!seen_gmax || gmax > max_g) { max_g = gmax; max_g_t = t; seen_gmax = 1 }
+          }
+        }
+      }
+      END {
+        if (!seen) {
+          print "Physics sanity checks: no timestep rows found."
+          exit 0
+        }
+
+        fail = 0
+        print "Physics sanity checks:"
+        printf "  final time: %g\n", last_t
+
+        if (seen_n) {
+          printf "  min n_min: %g at time=%g\n", min_n, min_n_t
+          if (min_n < n_floor) {
+            printf "  FAIL: n_min (%g) < floor (%g)\n", min_n, n_floor
+            fail = 1
+          }
+        }
+        if (seen_j) {
+          printf "  min J_min_1: %g at time=%g\n", min_j, min_j_t
+          if (min_j <= j_floor) {
+            printf "  FAIL: J_min_1 (%g) <= floor (%g)\n", min_j, j_floor
+            fail = 1
+          }
+        }
+        if (seen_d) {
+          printf "  min min_Dphys: %g at time=%g\n", min_d, min_d_t
+          if (min_d < d_floor) {
+            printf "  FAIL: min_Dphys (%g) < floor (%g)\n", min_d, d_floor
+            fail = 1
+          }
+        }
+        if (seen_gmin) {
+          printf "  min min_gate_tot: %g at time=%g\n", min_g, min_g_t
+          if (min_g < gate_floor) {
+            printf "  FAIL: min_gate_tot (%g) < floor (%g)\n", min_g, gate_floor
+            fail = 1
+          }
+        }
+        if (seen_gmax) {
+          printf "  max max_gate_tot: %g at time=%g\n", max_g, max_g_t
+          if (max_g > gate_ceil) {
+            printf "  FAIL: max_gate_tot (%g) > ceil (%g)\n", max_g, gate_ceil
+            fail = 1
+          }
+        }
+
+        if (!fail)
+          print "  PASS: sanity thresholds satisfied."
+
+        exit fail
+      }
+    ' "${hotspots_csv}" > "${report_txt}"
+  rc=$?
+  set -e
+  return "${rc}"
+}
+
+write_failure_signature_report() {
+  local report_txt="$1"
+  shift
+  local logs=("$@")
+  local fail=0
+  local patterns='SNES_DIVERGED_|KSP_DIVERGED_|DIVERGED_FNORM_NAN|DIVERGED_LINEAR_SOLVE|Linear solve did not converge|Nonlinear solve did not converge|floating point exception|segmentation fault|inverted element|negative jacobian|zero pivot|(^|[^A-Za-z])(NaN|nan|NAN|Inf|inf|INF)([^A-Za-z]|$)'
+  local log
+  local hits
+
+  {
+    echo "Numerical/physics failure signature scan:"
+    echo "  patterns=${patterns}"
+    for log in "${logs[@]}"; do
+      [[ -f "${log}" ]] || continue
+      echo
+      echo "Log: ${log}"
+      hits="$(grep -En "${patterns}" "${log}" | head -n 40 || true)"
+      if [[ -n "${hits}" ]]; then
+        fail=1
+        echo "${hits}"
+      else
+        echo "  (no known signatures found)"
+      fi
+    done
+  } > "${report_txt}"
+
+  return "${fail}"
+}
+
 summarize_watch_diagnostics() {
   local solver_csv="${RUN_DIR}/solver_watch.csv"
   local hotspots_csv="${RUN_DIR}/solver_hotspots.csv"
   local report_txt="${RUN_DIR}/stiffness_summary.txt"
+  local physics_report="${RUN_DIR}/physics_sanity.txt"
 
   if ! copy_watch_csvs; then
     echo "WARNING: no outputs/solver_watch.csv or outputs/mesh_watch.csv found to summarize"
@@ -284,11 +499,27 @@ summarize_watch_diagnostics() {
 
   write_slowdown_report "${hotspots_csv}" "${report_txt}"
   echo "Stiffness summary: ${report_txt}"
+
+  if write_physics_sanity_report "${hotspots_csv}" "${physics_report}"; then
+    echo "Physics sanity: ${physics_report}"
+  else
+    echo "WARNING: physics sanity checks detected threshold violations. See ${physics_report}"
+    if [[ "${SMOKE_FAIL_ON_PHYSICS}" == "1" ]]; then
+      echo "ERROR: failing smoke due to physics sanity violations (SMOKE_FAIL_ON_PHYSICS=1)." >&2
+      exit 1
+    fi
+  fi
 }
 
 echo "Smoke debug run directory: ${RUN_DIR}"
 echo "SMOKE_NP=${SMOKE_NP}  SMOKE_INPUT=${SMOKE_INPUT}  SMOKE_END_TIME=${SMOKE_END_TIME}"
 echo "SMOKE_SLOW_NL_ITS=${SMOKE_SLOW_NL_ITS}  SMOKE_SLOW_LIN_ITS=${SMOKE_SLOW_LIN_ITS}  SMOKE_DT_DROP_FACTOR=${SMOKE_DT_DROP_FACTOR}"
+echo "SMOKE_REQUIRE_CURRENT_INPUT=${SMOKE_REQUIRE_CURRENT_INPUT}  SMOKE_FAIL_ON_PHYSICS=${SMOKE_FAIL_ON_PHYSICS}  SMOKE_FAIL_ON_NUMERICS=${SMOKE_FAIL_ON_NUMERICS}"
+
+require_smoke_input "${SMOKE_INPUT}" "SMOKE_INPUT"
+if [[ "${SMOKE_RUN_JACOBIAN}" != "0" ]]; then
+  require_smoke_input "${SMOKE_JAC_INPUT}" "SMOKE_JAC_INPUT"
+fi
 
 if ! run_and_log_allow_fail input_check \
   ./collie-opt \
@@ -340,9 +571,34 @@ fi
 
 summarize_watch_diagnostics
 
+signature_logs=(
+  "${RUN_DIR}/input_check.log"
+  "${RUN_DIR}/mpi_solver_physics.log"
+)
+if [[ -f "${RUN_DIR}/mpi_solver_physics_retry_np1.log" ]]; then
+  signature_logs+=("${RUN_DIR}/mpi_solver_physics_retry_np1.log")
+fi
+
 if [[ "${SMOKE_RUN_JACOBIAN}" != "0" ]]; then
+  jac_opts='-snes_monitor -snes_converged_reason -ksp_converged_reason -snes_test_jacobian'
+  jac_extra_args=()
+
+  if [[ "${SMOKE_JAC_VIEW}" == "1" ]]; then
+    jac_opts="${jac_opts} -snes_test_jacobian_view"
+  fi
+
+  if [[ -n "${SMOKE_JAC_OVERRIDES}" ]]; then
+    read -r -a jac_extra_args <<< "${SMOKE_JAC_OVERRIDES}"
+  elif [[ "${SMOKE_JAC_AUTO_MESH_REDUCE}" == "1" ]] && \
+       grep -Eq 'type[[:space:]]*=[[:space:]]*GeneratedMeshGenerator' "${SMOKE_JAC_INPUT}"; then
+    jac_extra_args=("Mesh/gm/nx=${SMOKE_JAC_NX}" "Mesh/gm/ny=${SMOKE_JAC_NY}")
+  fi
+
   echo
   echo "SMOKE_RUN_JACOBIAN=${SMOKE_RUN_JACOBIAN}  SMOKE_JAC_INPUT=${SMOKE_JAC_INPUT}  SMOKE_JAC_END_TIME=${SMOKE_JAC_END_TIME}"
+  if [[ "${#jac_extra_args[@]}" -gt 0 ]]; then
+    echo "SMOKE_JAC_OVERRIDES=${jac_extra_args[*]}"
+  fi
   run_and_log jacobian_spotcheck \
     ./collie-opt \
     -i "${SMOKE_JAC_INPUT}" \
@@ -352,8 +608,20 @@ if [[ "${SMOKE_RUN_JACOBIAN}" != "0" ]]; then
     Outputs/exodus=false \
     Outputs/csv=false \
     Outputs/perf_graph=false \
-    Executioner/petsc_options='-snes_monitor -snes_converged_reason -ksp_converged_reason -snes_test_jacobian'
+    "${jac_extra_args[@]}" \
+    Executioner/petsc_options="${jac_opts}"
   summarize_jacobian "${RUN_DIR}/jacobian_spotcheck.log"
+  signature_logs+=("${RUN_DIR}/jacobian_spotcheck.log")
+fi
+
+if write_failure_signature_report "${RUN_DIR}/numerics_signals.txt" "${signature_logs[@]}"; then
+  echo "Numerical signature scan: ${RUN_DIR}/numerics_signals.txt (no known fail signatures)"
+else
+  echo "WARNING: numerical failure signatures found. See ${RUN_DIR}/numerics_signals.txt"
+  if [[ "${SMOKE_FAIL_ON_NUMERICS}" == "1" ]]; then
+    echo "ERROR: failing smoke due to numerical signature hits (SMOKE_FAIL_ON_NUMERICS=1)." >&2
+    exit 1
+  fi
 fi
 
 echo
@@ -371,6 +639,12 @@ if [[ -f "${RUN_DIR}/solver_hotspots.csv" ]]; then
 fi
 if [[ -f "${RUN_DIR}/stiffness_summary.txt" ]]; then
   echo "  ${RUN_DIR}/stiffness_summary.txt"
+fi
+if [[ -f "${RUN_DIR}/physics_sanity.txt" ]]; then
+  echo "  ${RUN_DIR}/physics_sanity.txt"
+fi
+if [[ -f "${RUN_DIR}/numerics_signals.txt" ]]; then
+  echo "  ${RUN_DIR}/numerics_signals.txt"
 fi
 if [[ "${SMOKE_RUN_JACOBIAN}" != "0" ]]; then
   echo "  ${RUN_DIR}/jacobian_spotcheck.log"

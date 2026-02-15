@@ -17,7 +17,7 @@ echo "Running ${CASE_NAME}"
 echo "  output: ${CASE_DIR}"
 
 mpiexec -n "${NP}" ./collie-opt \
-  -i inputs/2DN/RZ3_RD_AD_patch.i \
+  -i inputs/current/RZ3_RD_AD_patch.i \
   --error \
   --error-unused \
   Executioner/end_time="${END_TIME}" \

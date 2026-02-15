@@ -6,7 +6,7 @@ cd "${ROOT}"
 
 NP="${NP:-8}"
 MPI_LAUNCHER="${MPI_LAUNCHER:-/home/amcgs/miniforge/envs/moose/bin/mpiexec}"
-CASE_DIR="inputs/2DN/suites/stress_relief_t1/permutations_rz3"
+CASE_DIR="inputs/legacy/2DN/suites/stress_relief_t1/permutations_rz3"
 OUT_ROOT="outputs/suites/stress_relief_t1"
 QUICK_ANALYSIS="${OUT_ROOT}/quick30_mesh60/analysis_table.txt"
 FULL_DIR="${OUT_ROOT}/full48"
